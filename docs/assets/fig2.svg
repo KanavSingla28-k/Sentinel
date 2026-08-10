@@ -1,0 +1,43 @@
+<svg viewBox="0 0 640 1000" width="100%" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Request pipeline from client through middleware, policy resolver, rate limiter, Redis Lua, to decision">
+  <defs>
+    <marker id="ah2" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#4472C4"/></marker>
+  </defs>
+  <line x1="320" y1="120" x2="320" y2="200" stroke="#4472C4" stroke-width="1.4" marker-end="url(#ah2)"/>
+  <text x="340" y="165" font-family="monospace" font-size="10.5" fill="#5B7A99">request</text>
+
+  <line x1="320" y1="290" x2="320" y2="370" stroke="#4472C4" stroke-width="1.4" marker-end="url(#ah2)"/>
+  <text x="340" y="335" font-family="monospace" font-size="10.5" fill="#5B7A99">tenant_id (JWT claim only)</text>
+
+  <line x1="320" y1="460" x2="320" y2="540" stroke="#4472C4" stroke-width="1.4" marker-end="url(#ah2)"/>
+  <text x="340" y="505" font-family="monospace" font-size="10.5" fill="#5B7A99">effective policy</text>
+
+  <line x1="320" y1="630" x2="320" y2="710" stroke="#4472C4" stroke-width="1.4" marker-end="url(#ah2)"/>
+  <text x="340" y="675" font-family="monospace" font-size="10.5" fill="#5B7A99">capacity / refill_rate / window</text>
+
+  <line x1="320" y1="800" x2="320" y2="880" stroke="#4472C4" stroke-width="1.4" marker-end="url(#ah2)"/>
+  <text x="340" y="845" font-family="monospace" font-size="10.5" fill="#5B7A99">allow | deny + retry_after</text>
+
+  <rect x="80" y="30" width="480" height="90" rx="3" fill="#F3F7FA" stroke="#4472C4"/>
+  <text x="320" y="65" text-anchor="middle" font-family="monospace" font-size="13" font-weight="600" fill="#0A2A43">CLIENT REQUEST</text>
+  <text x="320" y="87" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">HTTPS call to a Sentinel-protected endpoint</text>
+
+  <rect x="80" y="200" width="480" height="90" rx="3" fill="#F3F7FA" stroke="#4472C4"/>
+  <text x="320" y="235" text-anchor="middle" font-family="monospace" font-size="13" font-weight="600" fill="#0A2A43">FASTAPI MIDDLEWARE</text>
+  <text x="320" y="257" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">Validates JWT signature + expiry</text>
+
+  <rect x="80" y="370" width="480" height="90" rx="3" fill="#F3F7FA" stroke="#4472C4"/>
+  <text x="320" y="405" text-anchor="middle" font-family="monospace" font-size="13" font-weight="600" fill="#0A2A43">POLICY RESOLVER</text>
+  <text x="320" y="427" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">tenant_id → effective Policy, server-side only</text>
+
+  <rect x="80" y="540" width="480" height="90" rx="3" fill="#F3F7FA" stroke="#4472C4"/>
+  <text x="320" y="575" text-anchor="middle" font-family="monospace" font-size="13" font-weight="600" fill="#0A2A43">RATE LIMITER</text>
+  <text x="320" y="597" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">Selects algorithm: token bucket or sliding window</text>
+
+  <rect x="80" y="710" width="480" height="90" rx="3" fill="#FBF1DF" stroke="#C97B15"/>
+  <text x="320" y="745" text-anchor="middle" font-family="monospace" font-size="13" font-weight="600" fill="#0A2A43">REDIS LUA — ATOMIC</text>
+  <text x="320" y="767" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">Redis TIME() as the one clock; validated ARGV only</text>
+
+  <rect x="80" y="880" width="480" height="90" rx="3" fill="#EAF6F0" stroke="#2F8F6B"/>
+  <text x="320" y="915" text-anchor="middle" font-family="monospace" font-size="13" font-weight="600" fill="#0A2A43">DECISION + RESPONSE</text>
+  <text x="320" y="937" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">Allow / 429 + Retry-After, decision_reason logged</text>
+</svg>

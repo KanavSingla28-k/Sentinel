@@ -1,0 +1,27 @@
+<svg viewBox="0 0 900 480" width="100%" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Testing strategy: three parallel test categories converging into a performance benchmark">
+  <defs>
+    <marker id="ah4" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#4472C4"/></marker>
+  </defs>
+  <line x1="160" y1="140" x2="400" y2="325" stroke="#4472C4" stroke-width="1.4" marker-end="url(#ah4)"/>
+  <line x1="450" y1="140" x2="450" y2="325" stroke="#4472C4" stroke-width="1.4" marker-end="url(#ah4)"/>
+  <line x1="740" y1="140" x2="500" y2="325" stroke="#4472C4" stroke-width="1.4" marker-end="url(#ah4)"/>
+
+  <rect x="30" y="30" width="260" height="110" rx="3" fill="#F3F7FA" stroke="#4472C4"/>
+  <text x="160" y="70" text-anchor="middle" font-family="monospace" font-size="12" font-weight="600" fill="#0A2A43">ALGORITHM REFERENCE</text>
+  <text x="160" y="92" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">Lua vs Python</text>
+  <text x="160" y="106" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">reference model</text>
+
+  <rect x="320" y="30" width="260" height="110" rx="3" fill="#F3F7FA" stroke="#4472C4"/>
+  <text x="450" y="70" text-anchor="middle" font-family="monospace" font-size="12" font-weight="600" fill="#0A2A43">DISTRIBUTED CONCURRENCY</text>
+  <text x="450" y="92" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">3 API instances +</text>
+  <text x="450" y="106" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">shared Redis</text>
+
+  <rect x="610" y="30" width="260" height="110" rx="3" fill="#FBF1DF" stroke="#C97B15"/>
+  <text x="740" y="70" text-anchor="middle" font-family="monospace" font-size="12" font-weight="600" fill="#0A2A43">FAILURE INJECTION</text>
+  <text x="740" y="92" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">Redis kill / timeout /</text>
+  <text x="740" y="106" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">NOSCRIPT</text>
+
+  <rect x="250" y="325" width="400" height="110" rx="3" fill="#EAF6F0" stroke="#2F8F6B"/>
+  <text x="450" y="368" text-anchor="middle" font-family="monospace" font-size="12" font-weight="600" fill="#2F8F6B">PERFORMANCE: BASELINE vs SENTINEL</text>
+  <text x="450" y="392" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">p50 / p95 / p99 delta, Redis + API CPU, error rate</text>
+</svg>

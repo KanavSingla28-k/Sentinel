@@ -1,0 +1,34 @@
+<svg viewBox="0 0 1000 250" width="100%" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Timeline from V1 spec through three review passes to frozen V1 spec">
+  <defs>
+    <marker id="ah1" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#4472C4"/></marker>
+  </defs>
+  <line x1="180" y1="110" x2="220" y2="110" stroke="#4472C4" stroke-width="1.4" marker-end="url(#ah1)"/>
+  <line x1="380" y1="110" x2="420" y2="110" stroke="#4472C4" stroke-width="1.4" marker-end="url(#ah1)"/>
+  <line x1="580" y1="110" x2="620" y2="110" stroke="#4472C4" stroke-width="1.4" marker-end="url(#ah1)"/>
+  <line x1="780" y1="110" x2="820" y2="110" stroke="#4472C4" stroke-width="1.4" marker-end="url(#ah1)"/>
+
+  <rect x="20" y="60" width="160" height="100" rx="3" fill="#F3F7FA" stroke="#4472C4"/>
+  <text x="100" y="100" text-anchor="middle" font-family="monospace" font-size="13" font-weight="600" fill="#0A2A43">V1 SPEC</text>
+  <text x="100" y="122" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">scope disciplined,</text>
+  <text x="100" y="136" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">assumptions untested</text>
+
+  <rect x="220" y="60" width="160" height="100" rx="3" fill="#FBF1DF" stroke="#C97B15"/>
+  <text x="300" y="100" text-anchor="middle" font-family="monospace" font-size="13" font-weight="600" fill="#0A2A43">REVIEW 1</text>
+  <text x="300" y="122" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">5 critical</text>
+  <text x="300" y="136" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">correctness gaps</text>
+
+  <rect x="420" y="60" width="160" height="100" rx="3" fill="#FBF1DF" stroke="#C97B15"/>
+  <text x="500" y="100" text-anchor="middle" font-family="monospace" font-size="13" font-weight="600" fill="#0A2A43">REVIEW 2</text>
+  <text x="500" y="122" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">8 attacker-</text>
+  <text x="500" y="136" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">economics issues</text>
+
+  <rect x="620" y="60" width="160" height="100" rx="3" fill="#F3F7FA" stroke="#2F8F6B"/>
+  <text x="700" y="100" text-anchor="middle" font-family="monospace" font-size="13" font-weight="600" fill="#0A2A43">REVIEW 3</text>
+  <text x="700" y="122" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">tensions resolved,</text>
+  <text x="700" y="136" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">no scope added</text>
+
+  <rect x="820" y="60" width="160" height="100" rx="3" fill="#EAF6F0" stroke="#2F8F6B"/>
+  <text x="900" y="100" text-anchor="middle" font-family="monospace" font-size="13" font-weight="600" fill="#2F8F6B">FROZEN V1</text>
+  <text x="900" y="122" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">every P0 has</text>
+  <text x="900" y="136" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">one resolved answer</text>
+</svg>

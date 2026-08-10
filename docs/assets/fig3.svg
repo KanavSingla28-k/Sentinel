@@ -1,0 +1,16 @@
+<svg viewBox="0 0 620 170" width="100%" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Three token bucket gauges at full, partial, and near-empty fill levels">
+  <circle cx="110" cy="70" r="46" fill="none" stroke="#DCE6EF" stroke-width="9"/>
+  <circle cx="110" cy="70" r="46" fill="none" stroke="#2F8F6B" stroke-width="9" stroke-dasharray="289 289" transform="rotate(-90 110 70)"/>
+  <text x="110" y="76" text-anchor="middle" font-family="monospace" font-size="13" font-weight="600" fill="#0A2A43">100%</text>
+  <text x="110" y="140" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">full — no requests yet</text>
+
+  <circle cx="310" cy="70" r="46" fill="none" stroke="#DCE6EF" stroke-width="9"/>
+  <circle cx="310" cy="70" r="46" fill="none" stroke="#C97B15" stroke-width="9" stroke-dasharray="173 289" transform="rotate(-90 310 70)"/>
+  <text x="310" y="76" text-anchor="middle" font-family="monospace" font-size="13" font-weight="600" fill="#0A2A43">60%</text>
+  <text x="310" y="140" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">draining, refilling</text>
+
+  <circle cx="510" cy="70" r="46" fill="none" stroke="#DCE6EF" stroke-width="9"/>
+  <circle cx="510" cy="70" r="46" fill="none" stroke="#C0392B" stroke-width="9" stroke-dasharray="58 289" transform="rotate(-90 510 70)"/>
+  <text x="510" y="76" text-anchor="middle" font-family="monospace" font-size="13" font-weight="600" fill="#0A2A43">20%</text>
+  <text x="510" y="140" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#5B7A99">near empty — denies next</text>
+</svg>
