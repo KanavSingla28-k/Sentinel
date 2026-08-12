@@ -1,0 +1,26 @@
+{
+  "app": {
+    "jwt_secret": "dev-only-secret-change-me-0123456789abcdef",
+    "jwt_algorithm_allowlist": ["HS256"]
+  },
+  "policies": {
+    "pdftalk.ingest": {
+      "endpoint_id": "pdftalk.ingest",
+      "capacity_micro": 1000000,
+      "refill_rate_micro_per_sec": 50000,
+      "algorithm": "sliding_window",
+      "fail_mode": "fail_closed",
+      "fallback_rate_per_process_micro": 5000,
+      "policy_version": 1
+    },
+    "resumint.tailor": {
+      "endpoint_id": "resumint.tailor",
+      "capacity_micro": 10000000,
+      "refill_rate_micro_per_sec": 10000,
+      "algorithm": "token_bucket",
+      "fail_mode": "fail_open",
+      "fallback_rate_per_process_micro": 2000,
+      "policy_version": 1
+    }
+  }
+}
