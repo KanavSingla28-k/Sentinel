@@ -1,12 +1,13 @@
 """Shared test fixtures."""
 
+import os
 from collections.abc import AsyncGenerator
 
 import pytest
 from redis.exceptions import RedisError
 from sentinel.redis import SentinelRedis
 
-TEST_REDIS_URL = "redis://localhost:6379/0"
+TEST_REDIS_URL = os.environ.get("SENTINEL_REDIS_URL", "redis://localhost:6379/0")
 
 
 @pytest.fixture

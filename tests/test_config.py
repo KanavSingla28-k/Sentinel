@@ -22,8 +22,6 @@ def _make_app(**overrides: object) -> dict[str, object]:
 def _make_policy(**overrides: object) -> dict[str, object]:
     policy: dict[str, object] = {
         "endpoint_id": "pdftalk.ingest",
-        "capacity_micro": 1_000_000,
-        "refill_rate_micro_per_sec": 50_000,
         "algorithm": "sliding_window",
         "fail_mode": "fail_closed",
         "fallback_rate_per_process_micro": 5_000,

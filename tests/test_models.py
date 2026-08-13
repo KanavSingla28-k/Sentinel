@@ -2,7 +2,15 @@
 
 import pytest
 from pydantic import ValidationError
-from sentinel.models import AlgorithmType, Decision, DecisionReason, FailMode, Policy
+from sentinel.models import (
+    LUA_MAX_EXACT_INT,
+    TOKEN_BUCKET_LUA_PRODUCT_LIMIT,
+    AlgorithmType,
+    Decision,
+    DecisionReason,
+    FailMode,
+    Policy,
+)
 
 EXPECTED_DECISION_REASONS = frozenset(
     {
@@ -21,8 +29,6 @@ EXPECTED_DECISION_REASONS = frozenset(
 def make_policy(**overrides: object) -> Policy:
     base: dict[str, object] = {
         "endpoint_id": "pdftalk.ingest",
-        "capacity_micro": 1_000_000,
-        "refill_rate_micro_per_sec": 1_000_000,
         "algorithm": AlgorithmType.SLIDING_WINDOW,
         "fail_mode": FailMode.FAIL_CLOSED,
         "fallback_rate_per_process_micro": 100_000,
@@ -33,11 +39,15 @@ def make_policy(**overrides: object) -> Policy:
     return Policy(**base)
 
 
+def test_token_bucket_lua_product_limit_stays_within_exact_int() -> None:
+    assert TOKEN_BUCKET_LUA_PRODUCT_LIMIT < LUA_MAX_EXACT_INT
+
+
 def test_valid_policy_constructs() -> None:
     policy = make_policy()
     assert policy.endpoint_id == "pdftalk.ingest"
-    assert policy.capacity_micro == 1_000_000
-    assert policy.refill_rate_micro_per_sec == 1_000_000
+    assert policy.capacity_micro is None
+    assert policy.refill_rate_micro_per_sec is None
     assert policy.algorithm is AlgorithmType.SLIDING_WINDOW
     assert policy.fail_mode is FailMode.FAIL_CLOSED
     assert policy.policy_version == 1
@@ -45,27 +55,37 @@ def test_valid_policy_constructs() -> None:
 
 def test_rejects_negative_capacity() -> None:
     with pytest.raises(ValidationError):
-        make_policy(capacity_micro=-1)
+        make_policy(algorithm=AlgorithmType.TOKEN_BUCKET, capacity_micro=-1, limit=None)
 
 
 def test_rejects_zero_capacity() -> None:
     with pytest.raises(ValidationError):
-        make_policy(capacity_micro=0)
+        make_policy(algorithm=AlgorithmType.TOKEN_BUCKET, capacity_micro=0, limit=None)
 
 
 def test_rejects_sub_token_capacity() -> None:
     with pytest.raises(ValidationError):
-        make_policy(capacity_micro=999_999)
+        make_policy(algorithm=AlgorithmType.TOKEN_BUCKET, capacity_micro=999_999, limit=None)
 
 
 def test_accepts_zero_refill_rate() -> None:
-    policy = make_policy(refill_rate_micro_per_sec=0)
+    policy = make_policy(
+        algorithm=AlgorithmType.TOKEN_BUCKET,
+        capacity_micro=1_000_000,
+        refill_rate_micro_per_sec=0,
+        limit=None,
+    )
     assert policy.refill_rate_micro_per_sec == 0
 
 
 def test_rejects_negative_refill_rate() -> None:
     with pytest.raises(ValidationError):
-        make_policy(refill_rate_micro_per_sec=-1)
+        make_policy(
+            algorithm=AlgorithmType.TOKEN_BUCKET,
+            capacity_micro=1_000_000,
+            refill_rate_micro_per_sec=-1,
+            limit=None,
+        )
 
 
 def test_rejects_unknown_algorithm() -> None:
@@ -146,6 +166,36 @@ def test_valid_token_bucket_policy_constructs() -> None:
     assert policy.window_size_micro == 60_000_000
 
 
+def test_sliding_window_rejects_capacity_micro() -> None:
+    with pytest.raises(ValidationError, match="only valid when algorithm is token_bucket"):
+        make_policy(capacity_micro=1_000_000)
+
+
+def test_sliding_window_rejects_refill_rate() -> None:
+    with pytest.raises(ValidationError, match="only valid when algorithm is token_bucket"):
+        make_policy(refill_rate_micro_per_sec=1_000_000)
+
+
+def test_token_bucket_requires_capacity_micro() -> None:
+    with pytest.raises(ValidationError, match="capacity_micro is required"):
+        make_policy(
+            algorithm=AlgorithmType.TOKEN_BUCKET,
+            refill_rate_micro_per_sec=1_000_000,
+            limit=None,
+            capacity_micro=None,
+        )
+
+
+def test_token_bucket_requires_refill_rate() -> None:
+    with pytest.raises(ValidationError, match="refill_rate_micro_per_sec is required"):
+        make_policy(
+            algorithm=AlgorithmType.TOKEN_BUCKET,
+            capacity_micro=1_000_000,
+            limit=None,
+            refill_rate_micro_per_sec=None,
+        )
+
+
 def test_sliding_window_rejects_zero_limit() -> None:
     with pytest.raises(ValidationError):
         make_policy(limit=0)
@@ -165,6 +215,7 @@ def test_token_bucket_rejects_limit() -> None:
     with pytest.raises(ValidationError, match="only valid when algorithm is sliding_window"):
         make_policy(
             algorithm=AlgorithmType.TOKEN_BUCKET,
+            capacity_micro=1_000_000,
             refill_rate_micro_per_sec=1_000_000,
             limit=10,
         )
@@ -174,6 +225,7 @@ def test_token_bucket_rejects_explicit_window_size() -> None:
     with pytest.raises(ValidationError, match="only valid when algorithm is sliding_window"):
         make_policy(
             algorithm=AlgorithmType.TOKEN_BUCKET,
+            capacity_micro=1_000_000,
             refill_rate_micro_per_sec=1_000_000,
             limit=None,
             window_size_micro=1_000_000,
@@ -194,18 +246,16 @@ def test_token_bucket_rejects_rate_above_lua_exactness_bound() -> None:
     with pytest.raises(ValidationError, match="Lua integer exactness"):
         make_policy(
             algorithm=AlgorithmType.TOKEN_BUCKET,
+            capacity_micro=1_000_000,
             refill_rate_micro_per_sec=2**30 + 1,
             limit=None,
         )
 
 
-def test_policy_fields_are_all_integer_microtokens() -> None:
-    for field_name in (
-        "capacity_micro",
-        "refill_rate_micro_per_sec",
-        "fallback_rate_per_process_micro",
-    ):
-        assert Policy.model_fields[field_name].annotation is int
+def test_policy_micro_fields_are_integers() -> None:
+    assert Policy.model_fields["capacity_micro"].annotation == (int | None)
+    assert Policy.model_fields["refill_rate_micro_per_sec"].annotation == (int | None)
+    assert Policy.model_fields["fallback_rate_per_process_micro"].annotation is int
 
 
 def test_decision_reason_has_exactly_eight_values() -> None:

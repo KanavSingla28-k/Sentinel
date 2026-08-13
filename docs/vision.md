@@ -1,3 +1,6 @@
+> **SUPERSEDED — do not treat this as the current V1 specification.**
+> This document is superseded by `sentinel-project-record.md`.
+
 # Sentinel — Build Specification
 
 **Application-aware, tenant-aware, distributed rate limiting library**

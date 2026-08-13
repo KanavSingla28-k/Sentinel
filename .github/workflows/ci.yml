@@ -44,6 +44,6 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
       - name: Run fast suite
-        run: pytest -m "not slow"
+        run: pytest -m "not slow" --cov=sentinel --cov-report=term-missing
         env:
           SENTINEL_REDIS_URL: redis://localhost:6379/0

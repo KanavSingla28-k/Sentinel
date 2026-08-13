@@ -4,7 +4,7 @@ import inspect
 from time import monotonic
 
 import pytest
-from redis.exceptions import RedisError
+from redis.exceptions import NoScriptError, RedisError
 from sentinel.redis import MAX_CONNECTIONS, NOEVICTION_POLICY, ScriptLoader, SentinelRedis
 
 pytestmark = pytest.mark.integration
@@ -83,6 +83,23 @@ async def test_execute_recovers_from_noscript(redis_client: SentinelRedis) -> No
     await redis_client.client.script_flush()
     result = await loader.execute("identity", keys=[], args=["7"])
     assert result == 7
+
+
+async def test_execute_raises_redis_error_when_script_missing_again(
+    redis_client: SentinelRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    loader = ScriptLoader(redis_client.client)
+    await loader.load("identity", IDENTITY_SCRIPT)
+    calls: list[int] = []
+
+    async def flaky_evalsha(*args: object, **kwargs: object) -> object:
+        calls.append(1)
+        raise NoScriptError
+
+    monkeypatch.setattr(loader._client, "evalsha", flaky_evalsha)
+    with pytest.raises(RedisError, match="missing again after re-load"):
+        await loader.execute("identity", keys=[], args=["1"])
+    assert calls == [1, 1]
 
 
 async def test_execute_unloaded_script_raises_key_error(redis_client: SentinelRedis) -> None:

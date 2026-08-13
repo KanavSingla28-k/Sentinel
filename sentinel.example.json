@@ -7,8 +7,6 @@
   "policies": {
     "pdftalk.ingest": {
       "endpoint_id": "pdftalk.ingest",
-      "capacity_micro": 1000000,
-      "refill_rate_micro_per_sec": 50000,
       "algorithm": "sliding_window",
       "fail_mode": "fail_closed",
       "fallback_rate_per_process_micro": 5000,

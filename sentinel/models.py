@@ -46,8 +46,8 @@ class Policy(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     endpoint_id: str = Field(pattern=_ENDPOINT_ID_PATTERN)
-    capacity_micro: int = Field(ge=TOKENS_PER_TOKEN_MICRO)
-    refill_rate_micro_per_sec: int = Field(ge=0)
+    capacity_micro: int | None = Field(default=None, ge=TOKENS_PER_TOKEN_MICRO)
+    refill_rate_micro_per_sec: int | None = Field(default=None, ge=0)
     algorithm: AlgorithmType
     fail_mode: FailMode
     fallback_rate_per_process_micro: int = Field(ge=1)
@@ -64,7 +64,19 @@ class Policy(BaseModel):
                 raise ValueError(
                     "limit * window_size_micro must not exceed 2**52 (Lua integer exactness)"
                 )
+            if self.capacity_micro is not None:
+                raise ValueError("capacity_micro is only valid when algorithm is token_bucket")
+            if self.refill_rate_micro_per_sec is not None:
+                raise ValueError(
+                    "refill_rate_micro_per_sec is only valid when algorithm is token_bucket"
+                )
         else:
+            if self.capacity_micro is None:
+                raise ValueError("capacity_micro is required when algorithm is token_bucket")
+            if self.refill_rate_micro_per_sec is None:
+                raise ValueError(
+                    "refill_rate_micro_per_sec is required when algorithm is token_bucket"
+                )
             if self.limit is not None:
                 raise ValueError("limit is only valid when algorithm is sliding_window")
             if "window_size_micro" in self.model_fields_set:
