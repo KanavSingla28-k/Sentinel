@@ -31,7 +31,7 @@ dev = [
 include = ["sentinel*"]
 
 [tool.setuptools.package-data]
-sentinel = ["py.typed"]
+sentinel = ["py.typed", "lua/*.lua"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
