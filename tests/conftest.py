@@ -3,9 +3,8 @@
 from collections.abc import AsyncGenerator
 
 import pytest
-from sentinel.redis import SentinelRedis
-
 from redis.exceptions import RedisError
+from sentinel.redis import SentinelRedis
 
 TEST_REDIS_URL = "redis://localhost:6379/0"
 

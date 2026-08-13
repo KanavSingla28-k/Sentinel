@@ -4,9 +4,8 @@ import inspect
 from time import monotonic
 
 import pytest
-from sentinel.redis import MAX_CONNECTIONS, NOEVICTION_POLICY, ScriptLoader, SentinelRedis
-
 from redis.exceptions import RedisError
+from sentinel.redis import MAX_CONNECTIONS, NOEVICTION_POLICY, ScriptLoader, SentinelRedis
 
 pytestmark = pytest.mark.integration
 
