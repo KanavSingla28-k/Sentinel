@@ -1,5 +1,6 @@
 {
   "app": {
+    "redis_url": "redis://localhost:6379/0",
     "jwt_secret": "dev-only-secret-change-me-0123456789abcdef",
     "jwt_algorithm_allowlist": ["HS256"]
   },

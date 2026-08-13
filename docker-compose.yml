@@ -6,6 +6,8 @@ services:
       - redis-server
       - --maxmemory-policy
       - noeviction
+      - --maxmemory
+      - 256mb
       - --appendonly
       - "no"
     ports:
