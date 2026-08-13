@@ -27,6 +27,7 @@ def make_policy(**overrides: object) -> Policy:
         "fail_mode": FailMode.FAIL_CLOSED,
         "fallback_rate_per_process_micro": 100_000,
         "policy_version": 1,
+        "limit": 10,
     }
     base.update(overrides)
     return Policy(**base)
@@ -115,6 +116,87 @@ def test_rejects_zero_fallback_rate() -> None:
 def test_rejects_extra_fields() -> None:
     with pytest.raises(ValidationError):
         make_policy(cost=5)
+
+
+def test_sliding_window_defaults_to_60_second_window() -> None:
+    policy = make_policy()
+    assert policy.limit == 10
+    assert policy.window_size_micro == 60_000_000
+
+
+def test_sliding_window_accepts_explicit_window_size() -> None:
+    policy = make_policy(window_size_micro=1_000_000)
+    assert policy.window_size_micro == 1_000_000
+
+
+def test_sliding_window_requires_limit() -> None:
+    with pytest.raises(ValidationError, match="limit is required"):
+        make_policy(limit=None)
+
+
+def test_valid_token_bucket_policy_constructs() -> None:
+    policy = make_policy(
+        algorithm=AlgorithmType.TOKEN_BUCKET,
+        capacity_micro=2_000_000,
+        refill_rate_micro_per_sec=1_000_000,
+        limit=None,
+    )
+    assert policy.algorithm is AlgorithmType.TOKEN_BUCKET
+    assert policy.limit is None
+    assert policy.window_size_micro == 60_000_000
+
+
+def test_sliding_window_rejects_zero_limit() -> None:
+    with pytest.raises(ValidationError):
+        make_policy(limit=0)
+
+
+def test_sliding_window_rejects_sub_millisecond_window() -> None:
+    with pytest.raises(ValidationError):
+        make_policy(window_size_micro=999)
+
+
+def test_sliding_window_rejects_product_above_lua_exactness_bound() -> None:
+    with pytest.raises(ValidationError, match="Lua integer exactness"):
+        make_policy(limit=10_000_000_000, window_size_micro=1_000_000)
+
+
+def test_token_bucket_rejects_limit() -> None:
+    with pytest.raises(ValidationError, match="only valid when algorithm is sliding_window"):
+        make_policy(
+            algorithm=AlgorithmType.TOKEN_BUCKET,
+            refill_rate_micro_per_sec=1_000_000,
+            limit=10,
+        )
+
+
+def test_token_bucket_rejects_explicit_window_size() -> None:
+    with pytest.raises(ValidationError, match="only valid when algorithm is sliding_window"):
+        make_policy(
+            algorithm=AlgorithmType.TOKEN_BUCKET,
+            refill_rate_micro_per_sec=1_000_000,
+            limit=None,
+            window_size_micro=1_000_000,
+        )
+
+
+def test_token_bucket_rejects_capacity_above_lua_exactness_bound() -> None:
+    with pytest.raises(ValidationError, match="Lua integer exactness"):
+        make_policy(
+            algorithm=AlgorithmType.TOKEN_BUCKET,
+            capacity_micro=2**30 + 1,
+            refill_rate_micro_per_sec=1_000_000,
+            limit=None,
+        )
+
+
+def test_token_bucket_rejects_rate_above_lua_exactness_bound() -> None:
+    with pytest.raises(ValidationError, match="Lua integer exactness"):
+        make_policy(
+            algorithm=AlgorithmType.TOKEN_BUCKET,
+            refill_rate_micro_per_sec=2**30 + 1,
+            limit=None,
+        )
 
 
 def test_policy_fields_are_all_integer_microtokens() -> None:
