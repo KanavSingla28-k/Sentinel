@@ -52,6 +52,11 @@ def test_rejects_zero_capacity() -> None:
         make_policy(capacity_micro=0)
 
 
+def test_rejects_sub_token_capacity() -> None:
+    with pytest.raises(ValidationError):
+        make_policy(capacity_micro=999_999)
+
+
 def test_accepts_zero_refill_rate() -> None:
     policy = make_policy(refill_rate_micro_per_sec=0)
     assert policy.refill_rate_micro_per_sec == 0

@@ -4,6 +4,8 @@ import enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from sentinel.algorithms import TOKENS_PER_TOKEN_MICRO
+
 _ENDPOINT_ID_PATTERN = r"^[a-z0-9._-]+$"
 
 
@@ -32,7 +34,7 @@ class Policy(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     endpoint_id: str = Field(pattern=_ENDPOINT_ID_PATTERN)
-    capacity_micro: int = Field(ge=1)
+    capacity_micro: int = Field(ge=TOKENS_PER_TOKEN_MICRO)
     refill_rate_micro_per_sec: int = Field(ge=0)
     algorithm: AlgorithmType
     fail_mode: FailMode
