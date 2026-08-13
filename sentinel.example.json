@@ -12,7 +12,9 @@
       "algorithm": "sliding_window",
       "fail_mode": "fail_closed",
       "fallback_rate_per_process_micro": 5000,
-      "policy_version": 1
+      "policy_version": 1,
+      "limit": 1000,
+      "window_size_micro": 60000000
     },
     "resumint.tailor": {
       "endpoint_id": "resumint.tailor",

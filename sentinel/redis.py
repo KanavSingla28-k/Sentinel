@@ -58,7 +58,7 @@ class ScriptLoader:
     def sha(self, name: str) -> str | None:
         return self._shas.get(name)
 
-    async def execute(self, name: str, keys: list[str], args: list[str]) -> int | None:
+    async def execute(self, name: str, keys: list[str], args: list[str]) -> int | list[int] | None:
         source = self._sources.get(name)
         if source is None:
             raise KeyError(f"script {name!r} has not been loaded")
@@ -70,4 +70,4 @@ class ScriptLoader:
                 result = await self._client.evalsha(self._shas[name], len(keys), *keys, *args)
             except NoScriptError as exc:
                 raise RedisError(f"script {name!r} missing again after re-load") from exc
-        return cast(int | None, result)
+        return cast("int | list[int] | None", result)

@@ -28,6 +28,8 @@ def _make_policy(**overrides: object) -> dict[str, object]:
         "fail_mode": "fail_closed",
         "fallback_rate_per_process_micro": 5_000,
         "policy_version": 1,
+        "limit": 1000,
+        "window_size_micro": 60_000_000,
     }
     policy.update(overrides)
     return policy
