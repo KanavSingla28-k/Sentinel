@@ -11,6 +11,7 @@ from sentinel.models import AlgorithmType, FailMode
 
 def _make_app(**overrides: object) -> dict[str, object]:
     app: dict[str, object] = {
+        "redis_url": "redis://localhost:6379/0",
         "jwt_secret": "dev-only-secret-change-me-0123456789abcdef",
         "jwt_algorithm_allowlist": ["HS256"],
     }
@@ -52,6 +53,7 @@ def test_valid_config_loads() -> None:
     assert policy.algorithm is AlgorithmType.SLIDING_WINDOW
     assert policy.fail_mode is FailMode.FAIL_CLOSED
     assert config.app.jwt_algorithm_allowlist == frozenset({"HS256"})
+    assert config.app.redis_url == "redis://localhost:6379/0"
     assert config.app.jwt_secret.get_secret_value() == "dev-only-secret-change-me-0123456789abcdef"
 
 
@@ -80,9 +82,14 @@ def test_rejects_short_secret() -> None:
         make_config(app=_make_app(jwt_secret="too-short"))
 
 
+def test_rejects_non_redis_scheme() -> None:
+    with pytest.raises(ValidationError):
+        make_config(app=_make_app(redis_url="http://localhost:6379"))
+
+
 def test_rejects_unknown_root_key() -> None:
     with pytest.raises(ValidationError):
-        make_config(redis_url="redis://localhost:6379/0")
+        make_config(unknown_setting="x")
 
 
 def test_load_config_from_json_file(tmp_path: Path) -> None:

@@ -13,6 +13,7 @@ _ALLOWED_JWT_ALGORITHMS = frozenset({"HS256", "HS384", "HS512"})
 class AppConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    redis_url: str = Field(pattern=r"^redis://")
     jwt_secret: SecretStr = Field(min_length=32)
     jwt_algorithm_allowlist: frozenset[str]
 
