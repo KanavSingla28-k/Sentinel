@@ -5,6 +5,8 @@ from typing import cast
 
 import pytest
 from sentinel.algorithms import TOKENS_PER_TOKEN_MICRO
+from sentinel.circuit_breaker import CircuitBreaker
+from sentinel.emergency import TokenBucketEmergencyLimiter
 from sentinel.limiter import RateLimiter, build_bucket_key
 from sentinel.lua import load_scripts
 from sentinel.models import AlgorithmType, DecisionReason, FailMode, Policy
@@ -56,7 +58,7 @@ async def _now_micro(client: SentinelRedis) -> int:
 async def limiter(redis_client: SentinelRedis) -> RateLimiter:
     loader = ScriptLoader(redis_client.client)
     await load_scripts(loader)
-    return RateLimiter(loader)
+    return RateLimiter(loader, breaker=CircuitBreaker(), emergency=TokenBucketEmergencyLimiter())
 
 
 async def test_token_bucket_fresh_tenant_allows(

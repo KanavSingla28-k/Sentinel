@@ -1,9 +1,11 @@
 """Redis connection foundation for Sentinel (Phase 2)."""
 
-from typing import cast
+from typing import Any, cast
 
 from redis.asyncio import ConnectionPool, Redis
-from redis.exceptions import NoScriptError, RedisError
+from redis.exceptions import NoScriptError
+
+from sentinel.errors import ScriptMissingError
 
 SOCKET_TIMEOUT_SECONDS = 0.02
 SOCKET_CONNECT_TIMEOUT_SECONDS = 0.02
@@ -50,7 +52,7 @@ class ScriptLoader:
         self._shas: dict[str, str] = {}
 
     async def load(self, name: str, source: str) -> str:
-        sha = await self._client.script_load(source)
+        sha: str = cast(Any, await self._client.script_load(source))
         self._sources[name] = source
         self._shas[name] = sha
         return sha
@@ -63,11 +65,15 @@ class ScriptLoader:
         if source is None:
             raise KeyError(f"script {name!r} has not been loaded")
         try:
-            result = await self._client.evalsha(self._shas[name], len(keys), *keys, *args)
+            result = await cast(
+                Any, self._client.evalsha(self._shas[name], len(keys), *keys, *args)
+            )
         except NoScriptError:
-            self._shas[name] = await self._client.script_load(source)
+            self._shas[name] = cast(Any, await self._client.script_load(source))
             try:
-                result = await self._client.evalsha(self._shas[name], len(keys), *keys, *args)
+                result = await cast(
+                    Any, self._client.evalsha(self._shas[name], len(keys), *keys, *args)
+                )
             except NoScriptError as exc:
-                raise RedisError(f"script {name!r} missing again after re-load") from exc
+                raise ScriptMissingError(f"script {name!r} missing again after re-load") from exc
         return cast("int | list[int] | None", result)

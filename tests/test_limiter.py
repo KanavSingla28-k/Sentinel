@@ -1,10 +1,25 @@
-"""Rate limiter unit tests: key construction and Decision mapping (Phase 6)."""
+"""Rate limiter unit tests: key construction, Decision mapping, and failure
+handling (Phases 6 and 8)."""
 
 import time
 from typing import cast
 
 import pytest
 from pydantic import ValidationError
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import TimeoutError as RedisTimeoutError
+from sentinel.algorithms import TOKENS_PER_TOKEN_MICRO
+from sentinel.circuit_breaker import (
+    FAILURE_THRESHOLD,
+    OPEN_TIMEOUT_SECONDS,
+    BreakerState,
+    CircuitBreaker,
+)
+from sentinel.emergency import (
+    EmergencyLimiter,
+    TokenBucketEmergencyLimiter,
+)
+from sentinel.errors import ScriptMissingError
 from sentinel.limiter import (
     RateLimiter,
     SlidingWindowStrategy,
@@ -18,10 +33,17 @@ from sentinel.redis import ScriptLoader
 class FakeLoader:
     def __init__(self, results: dict[str, int | list[int] | None]) -> None:
         self._results = results
+        self._exceptions: dict[str, Exception | None] = {}
         self.calls: list[tuple[str, list[str], list[str]]] = []
+
+    def set_exception(self, name: str, exc: Exception | None) -> None:
+        self._exceptions[name] = exc
 
     async def execute(self, name: str, keys: list[str], args: list[str]) -> int | list[int] | None:
         self.calls.append((name, keys, args))
+        exc = self._exceptions.get(name)
+        if exc is not None:
+            raise exc
         return self._results.get(name)
 
 
@@ -188,7 +210,11 @@ async def test_rate_limiter_dispatches_to_correct_strategy() -> None:
             "sliding_window": [1, 1, 0, 1_700_000_000_000_000, 120],
         }
     )
-    rate_limiter = RateLimiter(cast(ScriptLoader, loader))
+    rate_limiter = RateLimiter(
+        cast(ScriptLoader, loader),
+        breaker=CircuitBreaker(),
+        emergency=TokenBucketEmergencyLimiter(),
+    )
     tb_decision = await rate_limiter.evaluate(_token_bucket_policy(), "sentinel:v1:tb")
     assert tb_decision.allowed is True
     assert tb_decision.reason is DecisionReason.ALLOWED
@@ -196,6 +222,263 @@ async def test_rate_limiter_dispatches_to_correct_strategy() -> None:
     assert sw_decision.allowed is True
     assert sw_decision.reason is DecisionReason.ALLOWED
     assert [name for name, _, _ in loader.calls] == ["token_bucket", "sliding_window"]
+
+
+def _limiter(
+    loader: FakeLoader,
+    *,
+    breaker: CircuitBreaker | None = None,
+    emergency: EmergencyLimiter | None = None,
+) -> RateLimiter:
+    return RateLimiter(
+        cast(ScriptLoader, loader),
+        breaker=breaker or CircuitBreaker(),
+        emergency=emergency or TokenBucketEmergencyLimiter(),
+    )
+
+
+async def test_fail_open_emergency_denial_produces_emergency_limit() -> None:
+    loader = FakeLoader({})
+    loader.set_exception("token_bucket", RedisTimeoutError("timeout"))
+    decision = await _limiter(loader).evaluate(
+        _token_bucket_policy(fail_mode=FailMode.FAIL_OPEN, fallback_rate_per_process_micro=2_000),
+        "sentinel:v1:k",
+    )
+    assert decision.allowed is False
+    assert decision.reason is DecisionReason.EMERGENCY_LOCAL_LIMIT
+    assert decision.remaining_micro == 2_000
+    assert decision.retry_after_seconds == (TOKENS_PER_TOKEN_MICRO - 2_000) / 2_000
+
+
+async def test_fail_closed_timeout_denies_with_fail_closed() -> None:
+    loader = FakeLoader({})
+    loader.set_exception("token_bucket", RedisTimeoutError("timeout"))
+    decision = await _limiter(loader).evaluate(
+        _token_bucket_policy(fail_mode=FailMode.FAIL_CLOSED), "sentinel:v1:k"
+    )
+    assert decision.allowed is False
+    assert decision.reason is DecisionReason.FAIL_CLOSED
+    assert decision.remaining_micro == 0
+    assert decision.retry_after_seconds is None
+
+
+async def test_fail_closed_connection_error_denies_with_fail_closed() -> None:
+    loader = FakeLoader({})
+    loader.set_exception("token_bucket", RedisConnectionError("connection refused"))
+    decision = await _limiter(loader).evaluate(
+        _token_bucket_policy(fail_mode=FailMode.FAIL_CLOSED), "sentinel:v1:k"
+    )
+    assert decision.allowed is False
+    assert decision.reason is DecisionReason.FAIL_CLOSED
+
+
+async def test_fail_closed_noscript_exhaustion_denies_with_fail_closed() -> None:
+    loader = FakeLoader({})
+    loader.set_exception("sliding_window", ScriptMissingError("missing again"))
+    decision = await _limiter(loader).evaluate(
+        _sliding_window_policy(fail_mode=FailMode.FAIL_CLOSED), "sentinel:v1:k"
+    )
+    assert decision.allowed is False
+    assert decision.reason is DecisionReason.FAIL_CLOSED
+
+
+async def test_fail_open_timeout_allows_with_failure_reason() -> None:
+    loader = FakeLoader({})
+    loader.set_exception("token_bucket", RedisTimeoutError("timeout"))
+    decision = await _limiter(loader).evaluate(
+        _token_bucket_policy(
+            fail_mode=FailMode.FAIL_OPEN, fallback_rate_per_process_micro=TOKENS_PER_TOKEN_MICRO
+        ),
+        "sentinel:v1:k",
+    )
+    assert decision.allowed is True
+    assert decision.reason is DecisionReason.REDIS_TIMEOUT
+    assert decision.remaining_micro == 0
+    assert decision.retry_after_seconds is None
+
+
+async def test_fail_open_connection_error_allows_with_failure_reason() -> None:
+    loader = FakeLoader({})
+    loader.set_exception("token_bucket", RedisConnectionError("connection refused"))
+    decision = await _limiter(loader).evaluate(
+        _token_bucket_policy(
+            fail_mode=FailMode.FAIL_OPEN, fallback_rate_per_process_micro=TOKENS_PER_TOKEN_MICRO
+        ),
+        "sentinel:v1:k",
+    )
+    assert decision.allowed is True
+    assert decision.reason is DecisionReason.REDIS_CONNECTION_ERROR
+
+
+async def test_fail_open_noscript_exhaustion_allows_with_failure_reason() -> None:
+    loader = FakeLoader({})
+    loader.set_exception("sliding_window", ScriptMissingError("missing again"))
+    decision = await _limiter(loader).evaluate(
+        _sliding_window_policy(
+            fail_mode=FailMode.FAIL_OPEN, fallback_rate_per_process_micro=TOKENS_PER_TOKEN_MICRO
+        ),
+        "sentinel:v1:k",
+    )
+    assert decision.allowed is True
+    assert decision.reason is DecisionReason.REDIS_NOSCRIPT_RETRY
+
+
+async def test_fail_open_tiny_fallback_denies_with_emergency_limit() -> None:
+    loader = FakeLoader({})
+    loader.set_exception("token_bucket", RedisTimeoutError("timeout"))
+    decision = await _limiter(loader).evaluate(
+        _token_bucket_policy(fail_mode=FailMode.FAIL_OPEN, fallback_rate_per_process_micro=2_000),
+        "sentinel:v1:k",
+    )
+    assert decision.allowed is False
+    assert decision.reason is DecisionReason.EMERGENCY_LOCAL_LIMIT
+    assert decision.remaining_micro == 2_000
+    assert decision.retry_after_seconds == (TOKENS_PER_TOKEN_MICRO - 2_000) / 2_000
+
+
+async def test_non_redis_exceptions_propagate() -> None:
+    loader = FakeLoader({})
+    loader.set_exception("token_bucket", KeyError("unloaded script"))
+    with pytest.raises(KeyError):
+        await _limiter(loader).evaluate(_token_bucket_policy(), "sentinel:v1:k")
+
+
+async def test_failure_decision_timestamp_is_reasonable() -> None:
+    loader = FakeLoader({})
+    loader.set_exception("token_bucket", RedisTimeoutError("timeout"))
+    before = time.time_ns() // 1_000
+    decision = await _limiter(loader).evaluate(
+        _token_bucket_policy(fail_mode=FailMode.FAIL_CLOSED), "sentinel:v1:k"
+    )
+    after = time.time_ns() // 1_000
+    assert before <= decision.decision_time_micro <= after
+
+
+def _tripped_breaker() -> CircuitBreaker:
+    breaker = CircuitBreaker()
+    for _ in range(FAILURE_THRESHOLD):
+        breaker.record_failure()
+    return breaker
+
+
+class FakeClock:
+    def __init__(self, start: float = 1_000.0) -> None:
+        self.value = start
+
+    def advance(self, seconds: float) -> None:
+        self.value += seconds
+
+    def __call__(self) -> float:
+        return self.value
+
+
+async def test_open_breaker_fail_closed_denies_without_redis() -> None:
+    breaker = _tripped_breaker()
+    loader = FakeLoader({})
+    limiter = _limiter(loader, breaker=breaker)
+    decision = await limiter.evaluate(
+        _sliding_window_policy(fail_mode=FailMode.FAIL_CLOSED), "sentinel:v1:k"
+    )
+    assert decision.allowed is False
+    assert decision.reason is DecisionReason.CIRCUIT_OPEN
+    assert decision.remaining_micro == 0
+    assert decision.retry_after_seconds is None
+    assert loader.calls == []
+
+
+async def test_open_breaker_fail_open_routes_to_emergency_without_redis() -> None:
+    breaker = _tripped_breaker()
+    loader = FakeLoader({})
+    limiter = _limiter(loader, breaker=breaker)
+    decision = await limiter.evaluate(
+        _token_bucket_policy(
+            fail_mode=FailMode.FAIL_OPEN, fallback_rate_per_process_micro=TOKENS_PER_TOKEN_MICRO
+        ),
+        "sentinel:v1:k",
+    )
+    assert decision.allowed is True
+    assert decision.reason is DecisionReason.CIRCUIT_OPEN
+    assert decision.remaining_micro == 0
+    assert loader.calls == []
+
+
+async def test_failures_accumulate_toward_open_threshold() -> None:
+    loader = FakeLoader({})
+    loader.set_exception("token_bucket", RedisTimeoutError("timeout"))
+    breaker = CircuitBreaker()
+    limiter = _limiter(loader, breaker=breaker)
+    policy = _token_bucket_policy(fail_mode=FailMode.FAIL_CLOSED)
+    for _ in range(FAILURE_THRESHOLD - 1):
+        await limiter.evaluate(policy, "sentinel:v1:k")
+    assert breaker.state is BreakerState.CLOSED
+    await limiter.evaluate(policy, "sentinel:v1:k")
+    assert breaker.state is BreakerState.OPEN
+
+
+async def test_genuine_redis_success_resets_failure_count() -> None:
+    loader = FakeLoader({"token_bucket": [1, 1_000_000, 1_700_000_000_000_000, 60]})
+    loader.set_exception("token_bucket", RedisTimeoutError("timeout"))
+    breaker = CircuitBreaker()
+    limiter = _limiter(loader, breaker=breaker)
+    policy = _token_bucket_policy(fail_mode=FailMode.FAIL_CLOSED)
+    for _ in range(FAILURE_THRESHOLD - 2):
+        await limiter.evaluate(policy, "sentinel:v1:k")
+    assert breaker.failure_count == FAILURE_THRESHOLD - 2
+    loader.set_exception("token_bucket", None)
+    decision = await limiter.evaluate(policy, "sentinel:v1:k")
+    assert decision.allowed is True
+    assert breaker.failure_count == 0
+    assert breaker.state is BreakerState.CLOSED
+
+
+async def test_emergency_pass_through_does_not_reset_breaker() -> None:
+    loader = FakeLoader({})
+    loader.set_exception("token_bucket", RedisTimeoutError("timeout"))
+    breaker = CircuitBreaker()
+    limiter = _limiter(loader, breaker=breaker)
+    decision = await limiter.evaluate(
+        _token_bucket_policy(
+            fail_mode=FailMode.FAIL_OPEN, fallback_rate_per_process_micro=TOKENS_PER_TOKEN_MICRO
+        ),
+        "sentinel:v1:k",
+    )
+    assert decision.allowed is True
+    assert breaker.failure_count == 1
+    assert breaker.state is BreakerState.CLOSED
+
+
+async def test_half_open_probe_failure_reopens_breaker() -> None:
+    clock = FakeClock()
+    loader = FakeLoader({})
+    loader.set_exception("token_bucket", RedisTimeoutError("timeout"))
+    breaker = CircuitBreaker(now=clock)
+    limiter = _limiter(loader, breaker=breaker)
+    policy = _token_bucket_policy(fail_mode=FailMode.FAIL_CLOSED)
+    for _ in range(FAILURE_THRESHOLD):
+        await limiter.evaluate(policy, "sentinel:v1:k")
+    assert breaker.state is BreakerState.OPEN
+    clock.advance(OPEN_TIMEOUT_SECONDS)
+    decision = await limiter.evaluate(policy, "sentinel:v1:k")
+    assert decision.reason is DecisionReason.FAIL_CLOSED
+    assert breaker.state is BreakerState.OPEN
+    assert len(loader.calls) == FAILURE_THRESHOLD + 1
+
+
+async def test_recovered_half_open_probe_success_closes_breaker() -> None:
+    clock = FakeClock()
+    loader = FakeLoader({"token_bucket": [1, 1_000_000, 1_700_000_000_000_000, 60]})
+    loader.set_exception("token_bucket", RedisTimeoutError("timeout"))
+    breaker = CircuitBreaker(now=clock)
+    limiter = _limiter(loader, breaker=breaker)
+    policy = _token_bucket_policy(fail_mode=FailMode.FAIL_CLOSED)
+    for _ in range(FAILURE_THRESHOLD):
+        await limiter.evaluate(policy, "sentinel:v1:k")
+    clock.advance(OPEN_TIMEOUT_SECONDS)
+    loader.set_exception("token_bucket", None)
+    decision = await limiter.evaluate(policy, "sentinel:v1:k")
+    assert decision.allowed is True
+    assert breaker.state is BreakerState.CLOSED
+    assert breaker.failure_count == 0
 
 
 def test_unknown_algorithm_follows_enum_contract() -> None:
