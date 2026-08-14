@@ -62,7 +62,7 @@ pre-commit run --all-files              # clean
 
 ## Work history (most recent first)
 
-1. **Completed phases 8–10 (branch `feat/failure-handling`, commit 73b0ef6, PR open):**
+1. **Completed phases 8–10 (branch `feat/failure-handling`, commit 73b0ef6, merged via PR #11):**
    - Phase 8 failure handling — `sentinel/errors.py` `classify_redis_error(exc)` maps
      `RedisTimeoutError` → `REDIS_TIMEOUT`, connection errors → `REDIS_CONNECTION_ERROR`,
      `ScriptMissingError` → `REDIS_NOSCRIPT_RETRY`; `ScriptMissingError` is now its own type
@@ -109,7 +109,7 @@ pre-commit run --all-files              # clean
 
 ## Where things stand
 
-- Branch `feat/failure-handling` (commit 73b0ef6), pushed, PR open — phases 8–10 complete. Merge to `main` and update this section after merge. Stale `origin/fix/sliding-window-anchor` branch can be deleted.
+- Branch `main`, clean working tree, `HEAD == origin/main` (537cfeb). Phases 8–10 merged via PR #11; stale `feat/failure-handling` and `origin/fix/sliding-window-anchor` branches can be deleted.
 - **Implemented:** phases 0–10 of the plan. `DecisionReason` (8 members) is fully exercised:
   all failure paths produce decisions and the HTTP layer maps them to 429/503.
 - **Not yet implemented (next work, per plan):**
