@@ -129,6 +129,22 @@ def test_sliding_window_elapsed_exactly_one_window_rolls_over() -> None:
     assert sliding_window_evaluate(10, 5, 2, 0, 1_000_000, 1_000_000) is True
 
 
+def test_sliding_window_partial_rollover_counts_remaining_time() -> None:
+    # window_size = 100, request at now = 160: the new window began at 100,
+    # so remaining = 40 (2 * window_size - now), not a full window. The
+    # post-shift previous count contributes 1 * 40/100 = 0.4 < limit 1.
+    assert sliding_window_evaluate(1, 1, 0, 0, 100, 160) is True
+    # The buggy oracle treated remaining as a full window (contribution
+    # 1.0 == limit) and rejected this request.
+
+
+def test_sliding_window_exact_boundary_rollover_counts_full_window() -> None:
+    # Review case: limit=1, current=1, previous=0, window_size=1, now=1.
+    # elapsed == window_size: the new window has just begun, so remaining is
+    # the full window and previous=1 exactly fills limit 1 -> rejected.
+    assert sliding_window_evaluate(1, 1, 0, 0, 1, 1) is False
+
+
 def test_sliding_window_elapsed_exactly_two_windows_expires_both() -> None:
     assert sliding_window_evaluate(5, 5, 9, 0, 1_000_000, 2_000_000) is True
 

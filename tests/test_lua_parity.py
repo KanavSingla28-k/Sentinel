@@ -351,10 +351,11 @@ async def test_sliding_window_rollover_shifts_counts(
     )
     assert isinstance(result, list)
     allowed, current_after, previous_after, start_after, ttl = result
-    # The anchor advances by exactly one window, so the request lands partway
-    # through the new window and the oracle sees the same rolled state.
+    # The stored (pre-rollover) state is passed straight to the oracle: the
+    # corrected rollover branch handles the shift and the partial remaining
+    # time itself, matching the Lua's anchor-advanced semantics.
     shifted_start = window_start + window_size
-    oracle_allowed = sliding_window_evaluate(limit, 0, 5, shifted_start, window_size, before)
+    oracle_allowed = sliding_window_evaluate(limit, 5, 5, window_start, window_size, before)
     assert allowed == oracle_allowed == 1
     assert current_after == 1
     assert previous_after == 5
@@ -378,7 +379,7 @@ async def test_sliding_window_rollover_allows_with_shifted_counts(
     assert isinstance(result, list)
     allowed, current_after, previous_after, start_after, _ = result
     shifted_start = window_start + window_size
-    oracle_allowed = sliding_window_evaluate(limit, 0, 4, shifted_start, window_size, before)
+    oracle_allowed = sliding_window_evaluate(limit, 4, 9, window_start, window_size, before)
     assert allowed == oracle_allowed == 1
     assert current_after == 1
     assert previous_after == 4
@@ -400,8 +401,9 @@ async def test_sliding_window_beyond_two_windows_resets_counts(
     )
     assert isinstance(result, list)
     allowed, current_after, previous_after, start_after, _ = result
-    # Both counts expired and the anchor resets to now: a fresh window.
-    oracle_allowed = sliding_window_evaluate(limit, 0, 0, before, window_size, before)
+    # Both counts expired and the anchor resets to now: a fresh window. The
+    # stored-state oracle call resolves >= 2 windows itself.
+    oracle_allowed = sliding_window_evaluate(limit, 5, 9, window_start, window_size, before)
     assert allowed == oracle_allowed == 1
     assert current_after == 1
     assert previous_after == 0
@@ -437,7 +439,7 @@ async def test_sliding_window_multi_rollover_enforces_limit(
         )
         assert isinstance(first, list)
         shifted_start = seed_start + window_size
-        oracle_allowed = sliding_window_evaluate(limit, 0, 3, shifted_start, window_size, before)
+        oracle_allowed = sliding_window_evaluate(limit, 3, 3, seed_start, window_size, before)
         assert first[0] == oracle_allowed == 1
         assert first[1] == 1
         assert first[2] == 3
