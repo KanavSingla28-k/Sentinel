@@ -30,7 +30,7 @@ def _unauthorized() -> HTTPException:
     )
 
 
-def _bearer_token_from(request: Request) -> str | None:
+def _bearer_token_from(request: Request) -> str:
     authorization = request.headers.get("authorization")
     if authorization is None:
         raise _unauthorized()
