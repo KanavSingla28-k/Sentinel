@@ -58,6 +58,8 @@ class TokenBucketStrategy:
             allowed=bool(allowed),
             reason=DecisionReason.ALLOWED if allowed else DecisionReason.RATE_LIMITED,
             remaining_micro=tokens_after,
+            # Python wall clock → observability timestamp
+            # Redis TIME()     → rate-limit algorithm clock
             decision_time_micro=time.time_ns() // 1_000,
             retry_after_seconds=retry_after_seconds,
         )
@@ -84,6 +86,8 @@ class SlidingWindowStrategy:
             allowed=bool(allowed),
             reason=DecisionReason.ALLOWED if allowed else DecisionReason.RATE_LIMITED,
             remaining_micro=max(0, policy.limit - current_after) * TOKENS_PER_TOKEN_MICRO,
+            # Python wall clock → observability timestamp
+            # Redis TIME()     → rate-limit algorithm clock
             decision_time_micro=time.time_ns() // 1_000,
             retry_after_seconds=None,
         )

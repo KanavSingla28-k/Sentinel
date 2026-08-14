@@ -351,13 +351,16 @@ async def test_sliding_window_rollover_shifts_counts(
     )
     assert isinstance(result, list)
     allowed, current_after, previous_after, start_after, ttl = result
-    oracle_allowed = sliding_window_evaluate(limit, 5, 5, window_start, window_size, before)
-    assert allowed == oracle_allowed == 0
-    assert current_after == 0
+    # The anchor advances by exactly one window, so the request lands partway
+    # through the new window and the oracle sees the same rolled state.
+    shifted_start = window_start + window_size
+    oracle_allowed = sliding_window_evaluate(limit, 0, 5, shifted_start, window_size, before)
+    assert allowed == oracle_allowed == 1
+    assert current_after == 1
     assert previous_after == 5
-    assert start_after == window_start
-    assert ttl == -1
-    assert await _get_state(redis_client, key) == seed
+    assert start_after == shifted_start
+    assert ttl == 2
+    assert await _get_state(redis_client, key) == f"1:5:{shifted_start}"
 
 
 async def test_sliding_window_rollover_allows_with_shifted_counts(
@@ -374,12 +377,13 @@ async def test_sliding_window_rollover_allows_with_shifted_counts(
     )
     assert isinstance(result, list)
     allowed, current_after, previous_after, start_after, _ = result
-    oracle_allowed = sliding_window_evaluate(limit, 4, 9, window_start, window_size, before)
+    shifted_start = window_start + window_size
+    oracle_allowed = sliding_window_evaluate(limit, 0, 4, shifted_start, window_size, before)
     assert allowed == oracle_allowed == 1
     assert current_after == 1
     assert previous_after == 4
-    assert start_after == window_start
-    assert await _get_state(redis_client, key) == f"1:4:{window_start}"
+    assert start_after == shifted_start
+    assert await _get_state(redis_client, key) == f"1:4:{shifted_start}"
 
 
 async def test_sliding_window_beyond_two_windows_resets_counts(
@@ -396,12 +400,109 @@ async def test_sliding_window_beyond_two_windows_resets_counts(
     )
     assert isinstance(result, list)
     allowed, current_after, previous_after, start_after, _ = result
-    oracle_allowed = sliding_window_evaluate(limit, 5, 9, window_start, window_size, before)
+    # Both counts expired and the anchor resets to now: a fresh window.
+    oracle_allowed = sliding_window_evaluate(limit, 0, 0, before, window_size, before)
     assert allowed == oracle_allowed == 1
     assert current_after == 1
     assert previous_after == 0
-    assert start_after == window_start
-    assert await _get_state(redis_client, key) == f"1:0:{window_start}"
+    assert 0 <= start_after - before <= CLOCK_DRIFT_MARGIN
+    assert await _get_state(redis_client, key) == f"1:0:{start_after}"
+
+
+async def test_sliding_window_multi_rollover_enforces_limit(
+    redis_client: SentinelRedis, loader: ScriptLoader
+) -> None:
+    """Many sequential requests across several rollovers stay limited.
+
+    Deterministic and sleep-free: every burst is seeded 1.5 windows after the
+    stored anchor (a rollover boundary), so the anchor must advance by exactly
+    one window and the limit must keep being enforced burst after burst.
+    Regression for the P0 review: a frozen anchor rolls over on every request,
+    which would let the first request of each seed burst through and then
+    reset counts forever.
+    """
+    limit = 3
+    window_size = 1_000_000
+    key = _unique_key("sw-multi-rollover")
+
+    for _ in range(4):
+        before = await _now_micro(redis_client)
+        # A full current window plus a full previous window, arriving 1.5
+        # windows after the anchor: exactly one rollover has elapsed.
+        seed_start = before - 3 * window_size // 2
+        await redis_client.client.set(key, f"3:3:{seed_start}")
+
+        first = await loader.execute(
+            SLIDING_WINDOW_SCRIPT, keys=[key], args=[str(limit), str(window_size)]
+        )
+        assert isinstance(first, list)
+        shifted_start = seed_start + window_size
+        oracle_allowed = sliding_window_evaluate(limit, 0, 3, shifted_start, window_size, before)
+        assert first[0] == oracle_allowed == 1
+        assert first[1] == 1
+        assert first[2] == 3
+        assert first[3] == shifted_start
+
+        second = await loader.execute(
+            SLIDING_WINDOW_SCRIPT, keys=[key], args=[str(limit), str(window_size)]
+        )
+        assert isinstance(second, list)
+        oracle_allowed = sliding_window_evaluate(limit, 1, 3, shifted_start, window_size, before)
+        assert second[0] == oracle_allowed == 1
+        assert second[1] == 2
+        assert second[3] == shifted_start
+
+        third = await loader.execute(
+            SLIDING_WINDOW_SCRIPT, keys=[key], args=[str(limit), str(window_size)]
+        )
+        assert isinstance(third, list)
+        oracle_allowed = sliding_window_evaluate(limit, 2, 3, shifted_start, window_size, before)
+        assert third[0] == oracle_allowed == 0
+        assert third[1] == 2
+        assert third[3] == shifted_start
+
+        # The denied request left the shifted state untouched.
+        assert await _get_state(redis_client, key) == f"2:3:{shifted_start}"
+
+
+async def test_sliding_window_beyond_two_windows_not_unlimited(
+    redis_client: SentinelRedis, loader: ScriptLoader
+) -> None:
+    """An idle-then-active tenant is never unlimited after two windows.
+
+    The P0 review scenario: a seed two-plus windows in the past must reset to
+    a fresh window anchored at now. A stale anchor (bug) kept resets firing on
+    every request, so every request was allowed and the endpoint was
+    effectively unlimited. With the fix, exactly `limit` requests are allowed
+    after the reset, then the limiter denies persistently.
+    """
+    limit = 3
+    window_size = 1_000_000
+    key = _unique_key("sw-not-unlimited")
+    before = await _now_micro(redis_client)
+    seed_start = before - 3 * window_size
+    await redis_client.client.set(key, f"3:3:{seed_start}")
+
+    allows = 0
+    last_start_after = 0
+    for _ in range(8):
+        result = await loader.execute(
+            SLIDING_WINDOW_SCRIPT, keys=[key], args=[str(limit), str(window_size)]
+        )
+        assert isinstance(result, list)
+        allowed, current_after, previous_after, start_after, ttl = result
+        # The anchor reset to now and must never freeze at the stale seed.
+        assert 0 <= start_after - before <= CLOCK_DRIFT_MARGIN
+        last_start_after = start_after
+        if allowed:
+            allows += 1
+        else:
+            # Denied requests do not modify the rate-limit state.
+            assert current_after == 3
+            assert previous_after == 0
+            assert ttl == -1
+    assert allows == limit
+    assert await _get_state(redis_client, key) == f"3:0:{last_start_after}"
 
 
 async def test_sliding_window_fresh_window_allows(

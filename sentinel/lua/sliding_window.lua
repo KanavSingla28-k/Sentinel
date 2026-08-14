@@ -9,6 +9,9 @@
 -- the returned counters are the post-rollover state the caller must persist.
 -- The key expires after 2 windows, which is the rollover horizon: expiry is
 -- lossless. Denied requests never write: the key and its TTL are untouched.
+-- window_start always marks the beginning of the current window: it advances
+-- by one window on rollover and resets to now after two or more windows
+-- elapse, so an active key never re-enters the same rollover twice.
 
 local limit = tonumber(ARGV[1])
 local window_size = tonumber(ARGV[2])
@@ -33,12 +36,22 @@ end
 local elapsed = now_micro - window_start
 local remaining = window_size
 if elapsed >= 2 * window_size then
+  -- Nothing useful carries across two or more windows: every stored count
+  -- has fallen out of the 2-window horizon.
   current = 0
   previous = 0
+  window_start = now_micro
 elseif elapsed >= window_size then
+  -- Exactly one window elapsed: shift current into previous and advance the
+  -- anchor so the next request is measured against the new window. The
+  -- request itself arrives partway through the new window, so remaining is
+  -- computed relative to the advanced anchor.
   previous = current
   current = 0
+  window_start = window_start + window_size
+  remaining = window_size - (now_micro - window_start)
 else
+  -- Inside the current window: the anchor stays put.
   remaining = window_size - elapsed
 end
 
