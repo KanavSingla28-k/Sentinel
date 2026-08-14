@@ -23,6 +23,31 @@ jobs:
       - name: Mypy (strict)
         run: mypy sentinel
 
+  security:
+    name: Security regression suite
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 10
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Run security suite
+        run: pytest -m security
+        env:
+          SENTINEL_REDIS_URL: redis://localhost:6379/0
+
   test:
     name: Tests (real Redis)
     runs-on: ubuntu-latest
