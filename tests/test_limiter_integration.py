@@ -174,8 +174,10 @@ async def test_sliding_window_rollover(redis_client: SentinelRedis, limiter: Rat
     assert decision.allowed is True
     assert decision.reason is DecisionReason.ALLOWED
     assert decision.remaining_micro == 4 * TOKENS_PER_TOKEN_MICRO
+    # The anchor advanced by exactly one window, so the persisted state is
+    # anchored at the beginning of the new window.
     state = await _get_state(redis_client, key)
-    assert state == f"1:4:{window_start}"
+    assert state == f"1:4:{window_start + 1_000_000}"
 
 
 async def test_tenant_isolation_same_endpoint(
