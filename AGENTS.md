@@ -19,13 +19,16 @@ two services with deliberately different policy semantics:
 - `sentinel/models.py` — `Policy`, `Decision`, `DecisionReason` (8 members), `FailMode`, `AlgorithmType`, Lua exactness constants
 - `sentinel/config.py` — `SentinelConfig`, `AppConfig`, `load_config(path)` (strict pydantic; extra keys forbidden)
 - `sentinel/resolver.py` — `StaticPolicyResolver.resolve(tenant_id, endpoint_id) -> Policy | None` (endpoint-only, tenant-agnostic)
-- `sentinel/redis.py` — `SentinelRedis` (hardcoded 20ms socket timeouts, fixed pool, `assert_noeviction()` startup check), `ScriptLoader` (load / execute with NOSCRIPT → re-EVAL once → raise)
+- `sentinel/redis.py` — `SentinelRedis` (hardcoded 20ms socket timeouts, fixed pool, `assert_noeviction()` startup check), `ScriptLoader` (load / execute with NOSCRIPT → re-EVAL once → raise `ScriptMissingError`)
 - `sentinel/lua.py` — `TOKEN_BUCKET_SCRIPT`, `SLIDING_WINDOW_SCRIPT`, `SCRIPT_NAMES`, `script_source(name)`; sources in `sentinel/lua/*.lua`
-- `sentinel/limiter.py` — `RateLimiter.evaluate(policy, key)`, `TokenBucketStrategy`, `SlidingWindowStrategy`, `build_bucket_key(tenant_id, endpoint_id, policy_version)`
+- `sentinel/limiter.py` — `RateLimiter.evaluate(policy, key)`, `TokenBucketStrategy`, `SlidingWindowStrategy`, `build_bucket_key(tenant_id, endpoint_id, policy_version)`; Phase 8–10 wiring: breaker check → strategy → RedisError classification (fail-closed → `FAIL_CLOSED`, fail-open → emergency limiter). `RateLimiter` requires explicit `breaker` and `emergency` dependencies.
+- `sentinel/errors.py` — `classify_redis_error(exc) -> DecisionReason` (timeout → `REDIS_TIMEOUT`, connection → `REDIS_CONNECTION_ERROR`, `ScriptMissingError` → `REDIS_NOSCRIPT_RETRY`); `ScriptMissingError` (NOSCRIPT re-load exhaustion; raised by `ScriptLoader`). Programming errors (KeyError, etc.) are never caught.
+- `sentinel/circuit_breaker.py` — per-process CLOSED/OPEN/HALF-OPEN breaker (`CircuitBreaker`, `FAILURE_THRESHOLD`, `OPEN_TIMEOUT_SECONDS`); OPEN short-circuits before Redis; only genuine Redis successes reset `failure_count`. Injected `now` clock for tests.
+- `sentinel/emergency.py` — `TokenBucketEmergencyLimiter` (per-process, endpoint-keyed token bucket; capacity = refill rate = `fallback_rate_per_process_micro`); deliberately uses the local monotonic clock — documented exception to the Redis-clock invariant, since it runs precisely when Redis is unreachable. `EmergencyOutcome(allowed, remaining_micro, retry_after_seconds)`, `EmergencyLimiter` protocol.
 - `sentinel/algorithms.py` — pure Python reference functions (`token_bucket_evaluate`, `sliding_window_evaluate`) used to validate the Lua scripts
 - `sentinel/auth.py` — `verify_bearer_token(token, secret, algorithms) -> sub`, `AuthenticationError`, `AuthReason`
-- `sentinel/http.py` — `SentinelGuard` FastAPI integration: `guard_for(endpoint_id)` dependency; `await guard.load_scripts()` required before first request
-- `tests/` — 14 files, 198 tests (see Testing below)
+- `sentinel/http.py` — `SentinelGuard` FastAPI integration: `guard_for(endpoint_id)` dependency; `await guard.load_scripts()` required before first request; denied reasons map to 429 (with `Retry-After`) or 503 (`_denied_status`, `_HTTP_429_REASONS`, `_HTTP_503_REASONS`)
+- `tests/` — 17 files, 252 tests (see Testing below)
 - `docs/` — `sentinel-project-record.md` (canonical, V1 spec frozen; `vision.md` superseded), `implementation_plan.md` (phase roadmap), `assets/*.svg`
 - `docker-compose.yml` — Redis 7 with `noeviction` + bounded `maxmemory` (required config)
 - `sentinel.example.json` — example config
@@ -45,7 +48,7 @@ two services with deliberately different policy semantics:
 ## Verified quality gates (all green at last run)
 
 ```
-pytest                                  # 198 passed (incl. integration tests against real Redis)
+pytest                                  # 252 passed (incl. integration tests against real Redis)
 pytest --cov=sentinel --cov-report=term-missing   # 100% coverage
 mypy sentinel                           # strict, clean
 ruff check .                            # clean
@@ -59,7 +62,31 @@ pre-commit run --all-files              # clean
 
 ## Work history (most recent first)
 
-1. **Bug fix (done, merged via PR #10, commit d4da3a5):** Sliding window Lua script anchored the
+1. **Completed phases 8–10 (branch `feat/failure-handling`, commit 73b0ef6, PR open):**
+   - Phase 8 failure handling — `sentinel/errors.py` `classify_redis_error(exc)` maps
+     `RedisTimeoutError` → `REDIS_TIMEOUT`, connection errors → `REDIS_CONNECTION_ERROR`,
+     `ScriptMissingError` → `REDIS_NOSCRIPT_RETRY`; `ScriptMissingError` is now its own type
+     raised by `ScriptLoader` (was a bare `RedisError`). `RateLimiter` catches only `RedisError`:
+     fail-closed → `FAIL_CLOSED` decision; fail-open → emergency limiter. Programming errors
+     (KeyError etc.) still propagate.
+   - Phase 9 circuit breaker — `sentinel/circuit_breaker.py` per-process CLOSED/OPEN/HALF-OPEN
+     state machine (`FAILURE_THRESHOLD`, `OPEN_TIMEOUT_SECONDS`, injected `now` clock for tests);
+     OPEN short-circuits before any Redis call (`CIRCUIT_OPEN`); only genuine Redis successes
+     reset `failure_count`.
+   - Phase 10 emergency limiter — `sentinel/emergency.py` per-process, endpoint-keyed token
+     bucket (capacity = refill rate = `fallback_rate_per_process_micro`; burst of one second of
+     fallback rate, then sustained); deliberately uses the local clock (documented exception to
+     invariant #1, it runs exactly when Redis is unreachable); denied → `EMERGENCY_LOCAL_LIMIT`
+     with `remaining_micro` + `retry_after_seconds`.
+   - `sentinel/http.py` — `_denied_status`/`_HTTP_429_REASONS`/`_HTTP_503_REASONS`: 429 for
+     `RATE_LIMITED`/`EMERGENCY_LOCAL_LIMIT` (with Retry-After), 503 for `FAIL_CLOSED`/
+     `CIRCUIT_OPEN`/`REDIS_TIMEOUT`/`REDIS_CONNECTION_ERROR`/`REDIS_NOSCRIPT_RETRY`.
+   - `RateLimiter` and `SentinelGuard` now take explicit `breaker`/`emergency` dependencies (no
+     hidden singletons); the always-allow test stub was deleted — tests exercise the real
+     emergency limiter.
+   - Also fixed pre-existing mypy debt in `sentinel/redis.py` (redis-py `evalsha` stub union
+     `Awaitable[str] | str`) so `mypy sentinel` is green again.
+2. **Bug fix (done, merged via PR #10, commit d4da3a5):** Sliding window Lua script anchored the
    current window to the request arrival time instead of Redis `TIME()` `now`, and did not expire a
    previous window that had fully elapsed when the arrival time preceded it. Fixed by anchoring to
    `now`, removing fully-elapsed previous windows, and writing the full updated window state
@@ -82,16 +109,17 @@ pre-commit run --all-files              # clean
 
 ## Where things stand
 
-- Branch `main`, clean working tree, `HEAD == origin/main` (d4da3a5). Stale `origin/fix/sliding-window-anchor` branch can be deleted.
-- **Implemented:** phases 0–7 of the plan. `DecisionReason` already declares the future
-  failure-mode values (`REDIS_TIMEOUT`, `REDIS_CONNECTION_ERROR`, `REDIS_NOSCRIPT_RETRY`,
-  `CIRCUIT_OPEN`, `EMERGENCY_LOCAL_LIMIT`, `FAIL_CLOSED`) and tests pin the enum to exactly 8
-  members — but the failure-handling code paths are **not built yet**.
+- Branch `feat/failure-handling` (commit 73b0ef6), pushed, PR open — phases 8–10 complete. Merge to `main` and update this section after merge. Stale `origin/fix/sliding-window-anchor` branch can be deleted.
+- **Implemented:** phases 0–10 of the plan. `DecisionReason` (8 members) is fully exercised:
+  all failure paths produce decisions and the HTTP layer maps them to 429/503.
 - **Not yet implemented (next work, per plan):**
-  - Phase 8 failure handling: exception → `decision_reason` classifier; fail-closed → 503; fail-open → emergency limiter
-  - Phase 9 in-memory circuit breaker (CLOSED/OPEN/HALF-OPEN, per-process)
-  - Phase 10 emergency local token bucket (per-instance `fallback_rate_per_process_micro`; deliberately uses local wall clock)
-  - Phase 11 security regression suite, Phase 12 observability (structured logs on deny; Prometheus metrics bounded to `endpoint_id`/`decision_reason`), Phase 13 concurrency/failure-injection tests (the plan's `slow` marker suite — no `slow`-marked tests exist yet), Phases 14–18 benchmarks/docs/packaging/integration/release
+  - Phase 11 security regression suite — tenant-spoofing test exists in `tests/test_http.py`
+    (`test_x_tenant_id_header_is_ignored`) but the phase's structural endpoint_id test,
+    JWT-replay documentation, and a `security` pytest marker are not built yet.
+  - Phase 12 observability — structured logs on deny; Prometheus metrics bounded to
+    `endpoint_id`/`decision_reason`.
+  - Phase 13 concurrency/failure-injection tests (the plan's `slow` marker suite — no
+    `slow`-marked tests exist yet), Phases 14–18 benchmarks/docs/packaging/integration/release.
 
 ## Conventions
 
