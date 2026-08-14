@@ -52,7 +52,11 @@ def sliding_window_evaluate(
     elif elapsed >= window_size_micro:
         previous_count = current_count
         current_count = 0
-        remaining_micro = window_size_micro
+        # The request arrives partway through the new window: only the time
+        # since the new window began (elapsed - window_size_micro) has been
+        # consumed, so the previous window still influences the estimate for
+        # the remainder of the new window.
+        remaining_micro = 2 * window_size_micro - elapsed
     else:
         remaining_micro = window_size_micro - elapsed
     estimated_scaled = current_count * window_size_micro + previous_count * remaining_micro

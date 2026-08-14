@@ -70,7 +70,9 @@ def _reference_sliding_window(
     elif now_micro >= window_size_micro:
         previous_count = current_count
         current_count = 0
-        remaining_micro = window_size_micro
+        # Reference keeps window_start = 0, so now_micro doubles as elapsed:
+        # partway into the new window, only 2 * window_size - now remains.
+        remaining_micro = 2 * window_size_micro - now_micro
     else:
         remaining_micro = window_size_micro - now_micro
     estimated = Fraction(current_count) + Fraction(
@@ -92,6 +94,31 @@ def test_sliding_window_matches_fraction_reference(
     actual = sliding_window_evaluate(limit, current, previous, 0, size, now)
     reference = _reference_sliding_window(limit, current, previous, size, now)
     assert actual == reference
+
+
+def test_sliding_window_partial_rollover_matches_fraction_reference() -> None:
+    """Deterministic oracle parity across every rollover region.
+
+    The exact-boundary case (now == size) hides the rollover-remaining bug
+    because remaining is the full window there either way; the partway case
+    (now == 160, remaining == 40) is where the buggy oracle diverged.
+    """
+    cases = [
+        (2, 3, 1, 100, 60),  # inside current window
+        (2, 2, 1, 100, 100),  # exactly one window boundary (hides the bug)
+        (1, 1, 0, 100, 160),  # partway into the next window: remaining 40
+        (1, 1, 0, 1, 1),  # review case at the exact boundary
+        (5, 5, 9, 100, 200),  # exactly two windows
+        (5, 5, 9, 100, 250),  # beyond two windows
+    ]
+    for limit, current, previous, size, now in cases:
+        actual = sliding_window_evaluate(limit, current, previous, 0, size, now)
+        reference = _reference_sliding_window(limit, current, previous, size, now)
+        assert actual == reference
+    # window_size=100, now=160: the new window started at 100, so 40 units
+    # remain; previous=2 contributes 2 * 40/100 = 4/5 < limit 2, which admits
+    # the request only under the corrected remaining-time semantics.
+    assert sliding_window_evaluate(2, 2, 0, 0, 100, 160) is True
 
 
 @given(
