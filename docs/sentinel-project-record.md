@@ -140,6 +140,14 @@ Everything below was found in review, not assumed away.
 | Float drift in long-lived buckets | Review 3 | Integer microtokens adopted |
 | Metrics cardinality bomb | Review 2 | `endpoint_id` always an explicit configured id, never a raw path |
 
+### Phase 12 observability verification (SEC-08 live assertion)
+
+The metrics-cardinality finding is now verified at both layers. The Phase 11 structural tripwire
+proves no code path derives `endpoint_id` from a request object; the Phase 12 live cardinality
+test fires requests at dynamic sub-paths and query strings under one guarded route and asserts
+exactly one `endpoint_id` label value is ever emitted, and that metrics carry no tenant label
+at all — only `endpoint_id` and `decision_reason`.
+
 ### Accepted upstream boundaries (V1)
 
 **JWT replay is an accepted V1 boundary.** A replayed valid bearer token is indistinguishable from
@@ -209,9 +217,11 @@ Feasible, and no longer theoretically feasible — every P0 issue found across t
 | Testing & benchmarking | 3–7 days |
 | Integration & documentation | 2–4 days |
 
-> **Status.** Implementation phases 0–11 complete as of the Phase 11 security-hardening pass
-> (PR #12): every §07 finding is locked in by a `security`-marked regression test or an explicit
-> documented boundary. Next: Phase 12 observability, then the Phase 13 concurrency suite.
+> **Status.** Implementation phases 0–12 complete. Phase 11 (PR #12) locked in every §07 finding
+> with a `security`-marked regression test or an explicit documented boundary; Phase 12 shipped
+> structured deny logging (`tenant_hash`, reason, latency, breaker state) and bounded
+> `endpoint_id`/`decision_reason` Prometheus metrics, plus the live SEC-08 cardinality assertion.
+> Next: the Phase 13 concurrency suite.
 
 > **Next.** Not another document. Build V1 against this spec, then kill Redis mid-traffic and run concurrent requests across 3 instances — the real adversarial test is load, not a fourth review.
 
