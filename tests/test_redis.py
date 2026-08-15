@@ -24,7 +24,16 @@ async def test_pool_enforces_timeout_budget_and_fixed_capacity(redis_client: Sen
 
 def test_max_connections_is_not_configurable() -> None:
     params = list(inspect.signature(SentinelRedis.__init__).parameters)
-    assert params == ["self", "redis_url"]
+    assert params == ["self", "redis_url", "socket_timeout", "socket_connect_timeout"]
+
+
+def test_custom_socket_timeouts_are_forwarded_to_the_pool() -> None:
+    client = SentinelRedis(
+        "redis://localhost:6379/0", socket_timeout=5.0, socket_connect_timeout=5.0
+    )
+    kwargs = client.client.connection_pool.connection_kwargs
+    assert kwargs["socket_timeout"] == 5.0
+    assert kwargs["socket_connect_timeout"] == 5.0
 
 
 @pytest.mark.security
