@@ -29,8 +29,9 @@ two services with deliberately different policy semantics:
 - `sentinel/auth.py` — `verify_bearer_token(token, secret, algorithms) -> sub`, `AuthenticationError`, `AuthReason`
 - `sentinel/observability.py` — `SentinelObservability` (injected into `SentinelGuard`, like `breaker`/`emergency`): `record_decision(tenant_hash, endpoint_id, decision, latency_micro, breaker_state)` emits a WARNING deny log (structured `extra` fields; never raw tenant) and increments `sentinel_decisions_total` + `sentinel_evaluate_latency_microseconds`, both labeled ONLY by `endpoint_id`/`decision_reason`. Process-wide collectors registered once on the default registry; injectable `logger`/`registry` for tests.
 - `sentinel/http.py` — `SentinelGuard` FastAPI integration: `guard_for(endpoint_id)` dependency; `await guard.load_scripts()` required before first request; denied reasons map to 429 (with `Retry-After`) or 503 (`_denied_status`, `_HTTP_429_REASONS`, `_HTTP_503_REASONS`); Phase 12 emits decision telemetry (latency measured around `limiter.evaluate`).
-- `tests/` — 21 files, 286 tests (23 `security`-marked, 9 `slow`-marked; see Testing below)
-- `docs/` — `sentinel-project-record.md` (canonical, V1 spec frozen; `vision.md` superseded), `implementation_plan.md` (phase roadmap), `phase-13-plan.md` (the executed Phase 13 plan; template for future phase plans), `phase-12-plan.md`, `phase-11-plan.md`, `phase-8-10-summary.md`, `assets/*.svg`
+- `benchmarks/benchmark.py` — Phase 14 dependency-free benchmark harness (B1–B9 cells × concurrency {1,8}: unguarded / with-Sentinel / detached / short-circuit / dead-port fail-open + fail-closed; p50/p95/p99, API+Redis CPU, decision-reason error rates, environment block; `--smoke`/`--out`/`--reps`); baseline in `docs/benchmark-results.md`
+- `tests/` — 22 files, 287 tests (23 `security`-marked, 10 `slow`-marked incl. `test_benchmark_smoke.py`; see Testing below)
+- `docs/` — `sentinel-project-record.md` (canonical, V1 spec frozen; `vision.md` superseded), `implementation_plan.md` (phase roadmap), `phase-14-plan.md` + `benchmark-results.md` (executed Phase 14 plan + baseline), `phase-13-plan.md` (executed Phase 13 plan; template for future phase plans), `phase-12-plan.md`, `phase-11-plan.md`, `phase-8-10-summary.md`, `assets/*.svg`
 - `docker-compose.yml` — Redis 7 with `noeviction` + bounded `maxmemory` (required config)
 - `sentinel.example.json` — example config
 - `.github/workflows/ci.yml` — lint job (ruff check / format / mypy), test job (pytest `-m "not slow"`, real Redis service), security job (`pytest -m security`, real Redis service), slow job (`pytest -m slow`, real Redis service)
@@ -49,7 +50,7 @@ two services with deliberately different policy semantics:
 ## Verified quality gates (all green at last run)
 
 ```
-pytest                                  # 277 passed (incl. integration tests against real Redis)
+pytest                                  # 287 passed (incl. integration tests against real Redis)
 pytest --cov=sentinel --cov-report=term-missing   # 100% coverage
 mypy sentinel                           # strict, clean
 ruff check .                            # clean
@@ -64,7 +65,40 @@ pre-commit run --all-files              # clean
 
 ## Work history (most recent first)
 
-1. **Completed Phase 13 concurrency/failure-injection tests (branch `test/concurrency-phase13`, merged via PR #14, commit c173c90):**
+1. **Completed Phase 14 benchmarking (branch `bench/perf-phase14`, merged via PR #15, commit 351c5dc):**
+   - `benchmarks/benchmark.py` — dependency-free stdlib harness (no new deps): cells B1–B9 ×
+     concurrency {1,8} (unguarded / with-Sentinel token-bucket + sliding-window / detached /
+     auth+decide / breaker-OPEN short-circuit / dead-port fail-open + fail-closed); p50/p95/p99
+     (median of 3 reps), API CPU (`process_time` deltas), Redis CPU (`INFO stats` deltas),
+     decision-reason error-rate histograms, full environment block. No-refill fresh-key policies
+     (invariant #6) so `over_limit == 0` everywhere; B8/B9 warm-up 0 (a warm-up would trip the
+     breaker and erase the measured failure journey).
+   - Baseline in `docs/benchmark-results.md`: with-Sentinel ≈ 5.2× throughput overhead at c=1
+     (p50 150 → 827 µs, one loopback Redis round trip dominating); breaker short-circuit ≈ 7 µs
+     p50 (~96k ops/s); failure-path p99 ≈ 27 ms ≈ the dead-port socket timeout (the limiter is
+     not the failure-path cost). Windows `process_time` is 15.6 ms tick-quantized — API CPU
+     disclosed as order-of-magnitude only. Numbers are single-machine loopback, reported as-is
+     (vision §12); no thresholds asserted.
+   - `tests/test_benchmark_smoke.py` (`slow`+`integration`) subprocesses the harness `--smoke` and
+     asserts structural invariants; self-configures bounded `noeviction` on the CI Redis around
+     the run (CI service is a plain container; harness `assert_noeviction()` is a real startup
+     check) and restores prior config in `finally`. Rides the existing `slow` CI job — no new CI
+     job. PR #15 CI fully green (lint/test/security/slow).
+   - **Production defect surfaced by the benchmark and deliberately NOT fixed in this phase
+     (disclosed in `docs/benchmark-results.md` + project record §09):** the fail-open emergency
+     limiter double-refills on denied calls (`emergency.py` persists `tokens_after` while
+     `token_bucket_evaluate` advances `last_refill_micro` only on ALLOW — the Lua's "denied
+     requests never write" contract, token_bucket.lua:8, is violated), admitting up to ~2.3× the
+     configured `fallback_rate_per_process_micro` under sustained failure (decisive experiment:
+     Lua allows at 0.0/1.10/2.19 s vs emergency 0.0/0.44/0.87/1.32/1.76/2.19/2.63 s at 1 token/s).
+     Why tests missed it: the emergency parity test drives the reference with the same
+     store-everything pattern (self-consistent); Lua-parity tests are single-step; Phase 13 bursts
+     are ms-scale (refill ≈ 0). Fix (mirror no-write-on-deny, update the parity test, add a
+     sustained-denial regression test) ships as a separate PR.
+   - Zero production-code changes (`git diff sentinel/` empty at merge); docs: `docs/phase-14-plan.md`
+     (executed plan), `docs/benchmark-results.md`, project record §09 "Phase 14 benchmark
+     verification" + §11 status, Phase 14 ticked in the implementation-plan checklist.
+2. **Completed Phase 13 concurrency/failure-injection tests (branch `test/concurrency-phase13`, merged via PR #14, commit c173c90):**
    - `tests/test_concurrency.py` (6 tests, `test_conc_<n>_...`, all `slow`-marked) — 50-coroutine
      races on shared real-Redis keys: token-bucket exact capacity (`refill_rate=0`, invariant #6),
      sliding-window bound vs the pure reference (never exact equality), unbounded 50-coroutine
@@ -159,19 +193,26 @@ pre-commit run --all-files              # clean
 
 ## Where things stand
 
-- Branch `main`, clean working tree, `HEAD == origin/main` (c173c90). Phases 0–13 merged (PRs #9–#14);
-  stale feature branches (local and remote) pruned. The post-merge docs commit `c173c90`
-  ("test(concurrency): phase-13 concurrency and failure-injection suite (#14)") holds the Phase 13
-  work; AGENTS.md/checklist/project-record updates land in the sanctioned follow-up docs commit.
-- **Implemented:** phases 0–13 of the plan. `DecisionReason` (8 members) is fully exercised:
+- Branch `main`, clean working tree, `HEAD == origin/main` (351c5dc). Phases 0–14 merged
+  (PRs #9–#15); stale feature branches (local and remote) pruned. The post-merge docs commit
+  `351c5dc` ("bench(perf): phase-14 benchmark harness and baseline (#15)") holds the Phase 14
+  work; this AGENTS.md update is the sanctioned follow-up docs commit.
+- **Implemented:** phases 0–14 of the plan. `DecisionReason` (8 members) is fully exercised:
   all failure paths produce decisions and the HTTP layer maps them to 429/503. §07 security
   findings are locked in by 23 `security`-marked regression tests (dedicated CI job), including
   the Phase 12 live metrics cardinality assertion. The §09 invariants are proven under
   concurrency: exact in-process and cross-process capacity, sliding-window reference bound,
-  breaker OPEN under load, emergency cap (9 `slow`-marked tests, dedicated CI job).
-- **Not yet implemented (next work, per plan):**
-  - Phases 14–18 benchmarks/docs/packaging/integration/release. Phase 14 (benchmarking: p50/p95/p99
-    overhead, failure-path latency) is the next phase.
+  breaker OPEN under load, emergency cap (10 `slow`-marked tests incl. the benchmark smoke,
+  dedicated CI job). Phase 14 baseline recorded in `docs/benchmark-results.md` (harness in
+  `benchmarks/benchmark.py`); the benchmark surfaced one fail-open defect (emergency limiter
+  double-refill, ~2.3× fallback rate under sustained failure) disclosed in
+  `docs/benchmark-results.md` + project record §09.
+- **Not yet implemented (next work):**
+  - The emergency-limiter fix PR (mirror the Lua's no-write-on-deny in `sentinel/emergency.py`,
+    update the self-consistent parity test, add a sustained-denial regression test) — disclosed
+    in `docs/benchmark-results.md`, per the benchmark-only Phase 14 scope.
+  - Phases 15–18 docs/packaging/integration/release. Phase 15 (documentation: README, Known
+    Limitations) is the next phase.
 
 ## Conventions
 
