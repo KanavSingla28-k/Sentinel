@@ -209,6 +209,10 @@ Feasible, and no longer theoretically feasible — every P0 issue found across t
 | Testing & benchmarking | 3–7 days |
 | Integration & documentation | 2–4 days |
 
+> **Status.** Implementation phases 0–11 complete as of the Phase 11 security-hardening pass
+> (PR #12): every §07 finding is locked in by a `security`-marked regression test or an explicit
+> documented boundary. Next: Phase 12 observability, then the Phase 13 concurrency suite.
+
 > **Next.** Not another document. Build V1 against this spec, then kill Redis mid-traffic and run concurrent requests across 3 instances — the real adversarial test is load, not a fourth review.
 
 ---

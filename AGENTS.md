@@ -48,7 +48,7 @@ two services with deliberately different policy semantics:
 ## Verified quality gates (all green at last run)
 
 ```
-pytest                                  # 252 passed (incl. integration tests against real Redis)
+pytest                                  # 264 passed (incl. integration tests against real Redis)
 pytest --cov=sentinel --cov-report=term-missing   # 100% coverage
 mypy sentinel                           # strict, clean
 ruff check .                            # clean
@@ -58,11 +58,17 @@ pre-commit run --all-files              # clean
 
 - Dev deps: `pip install -e ".[dev]"` (pytest, pytest-asyncio, mypy strict, ruff, pre-commit, coverage, redis, fastapi, uvicorn, httpx, pyjwt, pydantic).
 - Integration tests (`pytestmark = pytest.mark.integration`) need real Redis; the `redis_client` fixture in `tests/conftest.py` uses `SENTINEL_REDIS_URL` (default `redis://localhost:6379/0`) and auto-skips when Redis is unreachable.
+- Security regression tests (`pytest -m security`, 22 tests: `tests/test_security.py` + security-tagged tests in `test_http.py`/`test_circuit_breaker.py`/`test_models.py`/`test_redis.py`) run in a dedicated CI job and require real Redis for the tagged noeviction checks.
 - If shell file reads ever look corrupted, verify against git objects (`git cat-file -p HEAD:<path>`) or the working tree via pytest rather than trusting the first view.
 
 ## Work history (most recent first)
 
-1. **Completed phases 8–10 (branch `feat/failure-handling`, commit 73b0ef6, merged via PR #11):**
+1. **Completed Phase 11 security hardening (branch `test/security-hardening`, merged via PR #12, commit f5e1d5b):**
+   - Test + docs only; zero production-code changes. `tests/test_security.py` (12 tests, `test_sec_<n>_...` naming mirroring the §07 findings table, all `security`-marked) covers SEC-01 (no client-controlled `cost`: Policy/model/source/Lua tripwires), SEC-02 (Lua TTL-only: `EXPIRE`/`PEXPIRE` present, no `DEL`/`UNLINK`/`KEYS`/`SCAN`/`FLUSHALL`/`FLUSHDB` calls), SEC-03 (tenant spoofing: header-without-token 401 + identical spoof header never overrides `sub`), SEC-05 (breaker isolation across guards), SEC-08 (structural `inspect.getsource` tripwires on `SentinelGuard.guard_for`/`build_bucket_key` + behavioral URL/query-injection test). SEC-04 (JWT replay) and SEC-06 (Redis Cluster) are documented decisions, not tests.
+   - Tagged 10 existing tests with `@pytest.mark.security` (integration markers preserved on the three `test_redis.py` noeviction checks); added a missing `import pytest` to `test_circuit_breaker.py`.
+   - `pyproject.toml` now uses `--strict-markers`; `.github/workflows/ci.yml` gained a dedicated `security` job running `pytest -m security` against the shared Redis service.
+   - Project record §07 documents JWT replay as an accepted V1 upstream boundary (exp/sub required, strict allowlist, no token cache/state) and keeps Redis Cluster deferred to V2 (ADR-010).
+2. **Completed phases 8–10 (branch `feat/failure-handling`, commit 73b0ef6, merged via PR #11):**
    - Phase 8 failure handling — `sentinel/errors.py` `classify_redis_error(exc)` maps
      `RedisTimeoutError` → `REDIS_TIMEOUT`, connection errors → `REDIS_CONNECTION_ERROR`,
      `ScriptMissingError` → `REDIS_NOSCRIPT_RETRY`; `ScriptMissingError` is now its own type
@@ -109,15 +115,13 @@ pre-commit run --all-files              # clean
 
 ## Where things stand
 
-- Branch `main`, clean working tree, `HEAD == origin/main` (537cfeb). Phases 8–10 merged via PR #11; stale `feat/failure-handling` and `origin/fix/sliding-window-anchor` branches can be deleted.
-- **Implemented:** phases 0–10 of the plan. `DecisionReason` (8 members) is fully exercised:
-  all failure paths produce decisions and the HTTP layer maps them to 429/503.
+- Branch `main`, clean working tree, `HEAD == origin/main` (f5e1d5b). Phases 0–11 merged; stale feature branches (`feat/failure-handling`, `fix/sliding-window-anchor`, all `origin/chore|feat/*`) pruned.
+- **Implemented:** phases 0–11 of the plan. `DecisionReason` (8 members) is fully exercised:
+  all failure paths produce decisions and the HTTP layer maps them to 429/503. §07 security
+  findings are locked in by 22 `security`-marked regression tests (dedicated CI job).
 - **Not yet implemented (next work, per plan):**
-  - Phase 11 security regression suite — tenant-spoofing test exists in `tests/test_http.py`
-    (`test_x_tenant_id_header_is_ignored`) but the phase's structural endpoint_id test,
-    JWT-replay documentation, and a `security` pytest marker are not built yet.
   - Phase 12 observability — structured logs on deny; Prometheus metrics bounded to
-    `endpoint_id`/`decision_reason`.
+    `endpoint_id`/`decision_reason` (includes the live metrics cardinality bomb test deferred from Phase 11).
   - Phase 13 concurrency/failure-injection tests (the plan's `slow` marker suite — no
     `slow`-marked tests exist yet), Phases 14–18 benchmarks/docs/packaging/integration/release.
 
