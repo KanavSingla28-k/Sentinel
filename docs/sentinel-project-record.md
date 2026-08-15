@@ -195,6 +195,16 @@ Four invariants, tested aggressively rather than formally proven — enough to d
 
 > **Time-source testing, resolved.** No dual Lua scripts, no faked Redis clock. The no-refill correctness test sets `refill_rate = 0` — time becomes irrelevant to the assertion. Refill-behavior tests use short real durations with wall-clock waits. One script, tested under its real time source, always.
 
+### Phase 13 concurrency verification
+
+The four §09 invariants are now also proven under concurrency (`pytest -m slow`, `docs/phase-13-plan.md`):
+
+- **Exact capacity under concurrency.** 50 coroutines racing one fresh token-bucket key (`refill_rate=0`) admit exactly `capacity` and deny the rest — in-process (gated in-flight so the hardcoded 20 ms socket budget is never exceeded on any host) and cross-process: 3 spawned processes × 20 evaluations sharing one key admit exactly `capacity` total on healthy Redis (CI Linux).
+- **Sliding-window bound under concurrency.** A 50-coroutine burst into one window never admits more than the sequential reference simulation, and never below `limit - 1`.
+- **Breaker OPEN under load.** Both fake-loader and real dead-port failure injection under concurrent load count failures across racing evaluations and end OPEN.
+- **Emergency cap under fail-open load.** Under concurrent Redis failure the emergency limiter admits exactly one burst token (`fallback_rate_per_process_micro`) and denies the rest with `EMERGENCY_LOCAL_LIMIT`; Redis itself never admits more than capacity even when some evaluations time out (atomicity holds at the boundary too).
+- **Determinism note.** SentinelRedis hardcodes a 20 ms socket budget; a Windows/WSL2 loopback cannot sustain ≥20 simultaneous connections within it (measured), so the strict assertions run under an in-flight semaphore (4) and the unbounded 50-coroutine stress asserts the failure-tolerant invariants above plus a strict branch when no failure reasons appear. The dead-port client surfaces as `REDIS_CONNECTION_ERROR` on Linux and `REDIS_TIMEOUT` on Windows/WSL2 — both are accepted failure classes for that path. The emergency limiter remains documented per-process (V1).
+
 ---
 
 ## 10 · Deferred to V2
@@ -217,11 +227,13 @@ Feasible, and no longer theoretically feasible — every P0 issue found across t
 | Testing & benchmarking | 3–7 days |
 | Integration & documentation | 2–4 days |
 
-> **Status.** Implementation phases 0–12 complete. Phase 11 (PR #12) locked in every §07 finding
+> **Status.** Implementation phases 0–13 complete. Phase 11 (PR #12) locked in every §07 finding
 > with a `security`-marked regression test or an explicit documented boundary; Phase 12 shipped
 > structured deny logging (`tenant_hash`, reason, latency, breaker state) and bounded
-> `endpoint_id`/`decision_reason` Prometheus metrics, plus the live SEC-08 cardinality assertion.
-> Next: the Phase 13 concurrency suite.
+> `endpoint_id`/`decision_reason` Prometheus metrics, plus the live SEC-08 cardinality assertion;
+> Phase 13 proved the §09 invariants under concurrency and real failure injection (`slow` suite,
+> dedicated CI job).
+> Next: the Phase 14 benchmarking phase.
 
 > **Next.** Not another document. Build V1 against this spec, then kill Redis mid-traffic and run concurrent requests across 3 instances — the real adversarial test is load, not a fourth review.
 
