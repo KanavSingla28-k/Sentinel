@@ -21,9 +21,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import httpx
+import jwt
+from fastapi import Depends, FastAPI, Request
+from pydantic import SecretStr
 from sentinel.algorithms import TOKENS_PER_TOKEN_MICRO
 from sentinel.circuit_breaker import CircuitBreaker
+from sentinel.config import AppConfig, SentinelConfig
 from sentinel.emergency import TokenBucketEmergencyLimiter
+from sentinel.http import SentinelGuard
 from sentinel.limiter import RateLimiter, build_bucket_key
 from sentinel.lua import TOKEN_BUCKET_SCRIPT, load_scripts
 from sentinel.models import AlgorithmType, FailMode, Policy
@@ -31,6 +37,8 @@ from sentinel.redis import ScriptLoader, SentinelRedis
 
 ENDPOINT_ID = "bench.endpoint"
 POLICY_VERSION = 1
+JWT_SECRET = "benchmark-secret-0123456789abcdef0123456789abcdef"
+JWT_ALGORITHMS = frozenset({"HS256"})
 FALLBACK_RATE_PER_PROCESS_MICRO = 1_000_000
 TOKEN_CAPACITY_MICRO = 2**30
 SLIDING_LIMIT = 1_000
@@ -217,6 +225,67 @@ def _redis_worker(loader: ScriptLoader, run_id: str, worker_id: int) -> Worker:
     return op
 
 
+def _token(sub: str) -> str:
+    return jwt.encode({"sub": sub, "exp": int(time.time()) + 3_600}, JWT_SECRET, algorithm="HS256")
+
+
+def _http_worker(
+    client: httpx.AsyncClient, run_id: str, worker_id: int, with_guard: bool
+) -> Worker:
+    tokens: dict[str, str] = {}
+
+    async def op(seq: int) -> tuple[str, str | None, bool]:
+        tenant = f"bench-{run_id}-w{worker_id}-b{seq // BATCH_OPS}"
+        token = tokens.get(tenant)
+        if token is None:
+            token = _token(tenant)
+            tokens[tenant] = token
+        headers = {"Authorization": f"Bearer {token}"} if with_guard else {}
+        response = await client.post("/bench", headers=headers)
+        if not with_guard:
+            return str(response.status_code), None, False
+        key = build_bucket_key(tenant, ENDPOINT_ID, POLICY_VERSION)
+        return str(response.status_code), key, response.status_code == 200
+
+    return op
+
+
+def _make_app(
+    redis_url: str,
+    policy: Policy | None,
+    live_redis: SentinelRedis,
+    with_guard: bool,
+) -> tuple[FastAPI, SentinelGuard | None]:
+    if not with_guard:
+        app = FastAPI()
+
+        @app.post("/bench")
+        async def route() -> dict[str, bool]:
+            return {"allowed": True}
+
+        return app, None
+    assert policy is not None
+    config = SentinelConfig(
+        app=AppConfig(
+            redis_url=redis_url,
+            jwt_secret=SecretStr(JWT_SECRET),
+            jwt_algorithm_allowlist=JWT_ALGORITHMS,
+        ),
+        policies={ENDPOINT_ID: policy},
+    )
+    loader = ScriptLoader(live_redis.client)
+    guard = SentinelGuard(config, live_redis, loader)
+    app = FastAPI()
+
+    @app.post("/bench")
+    async def route(
+        request: Request, _: None = Depends(guard.guard_for(ENDPOINT_ID))
+    ) -> dict[str, bool]:
+        return {"allowed": request.state.decision.allowed}
+
+    return app, guard
+
+
 async def _cleanup(redis_client: SentinelRedis, keys: set[str]) -> None:
     ordered = sorted(keys)
     for index in range(0, len(ordered), 500):
@@ -260,7 +329,24 @@ def _rep_result(spec: CellSpec, measurement: Measurement) -> dict[str, Any]:
     }
 
 
-async def _run_rep(spec: CellSpec, live_redis: SentinelRedis, rep_id: str) -> dict[str, Any]:
+async def _run_rep(
+    spec: CellSpec, live_redis: SentinelRedis, redis_url: str, rep_id: str
+) -> dict[str, Any]:
+    if spec.path in ("http_unguarded", "http_guarded"):
+        with_guard = spec.path == "http_guarded"
+        app, guard = _make_app(redis_url, spec.policy, live_redis, with_guard)
+        if guard is not None:
+            await guard.load_scripts()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://bench") as client:
+            measured = [
+                _http_worker(client, rep_id, index, with_guard) for index in range(spec.concurrency)
+            ]
+            warmup = [
+                _http_worker(client, f"{rep_id}-warmup", index, with_guard)
+                for index in range(spec.concurrency)
+            ]
+            return await _run_measured(spec, live_redis, measured, warmup)
     if spec.path == "limiter":
         loader = ScriptLoader(live_redis.client)
         await load_scripts(loader)
@@ -315,6 +401,45 @@ def _build_cells(op_counts: dict[str, int]) -> list[CellSpec]:
     sliding = _sliding_window_policy()
     cells: list[CellSpec] = []
     for concurrency in CONCURRENCIES:
+        cells.append(
+            CellSpec(
+                "B1",
+                "unguarded HTTP (no Sentinel)",
+                "http_unguarded",
+                "none",
+                "live",
+                concurrency,
+                op_counts["http"],
+                WARMUP_OPS,
+                None,
+            )
+        )
+        cells.append(
+            CellSpec(
+                "B2",
+                "guarded HTTP token bucket",
+                "http_guarded",
+                "token_bucket",
+                "live",
+                concurrency,
+                op_counts["http"],
+                WARMUP_OPS,
+                fail_open,
+            )
+        )
+        cells.append(
+            CellSpec(
+                "B3",
+                "guarded HTTP sliding window",
+                "http_guarded",
+                "sliding_window",
+                "live",
+                concurrency,
+                op_counts["http"],
+                WARMUP_OPS,
+                sliding,
+            )
+        )
         cells.append(
             CellSpec(
                 "B4",
@@ -398,7 +523,7 @@ async def _run_all(args: argparse.Namespace) -> dict[str, Any]:
             rep_results: list[dict[str, Any]] = []
             for rep in range(reps):
                 rep_id = f"{run_id}-{spec.id}-c{spec.concurrency}-r{rep}"
-                rep_results.append(await _run_rep(spec, live, rep_id))
+                rep_results.append(await _run_rep(spec, live, args.redis_url, rep_id))
             cell_results.append(
                 {
                     "id": spec.id,
