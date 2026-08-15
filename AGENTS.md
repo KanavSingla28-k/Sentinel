@@ -21,15 +21,16 @@ two services with deliberately different policy semantics:
 - `sentinel/resolver.py` — `StaticPolicyResolver.resolve(tenant_id, endpoint_id) -> Policy | None` (endpoint-only, tenant-agnostic)
 - `sentinel/redis.py` — `SentinelRedis` (hardcoded 20ms socket timeouts, fixed pool, `assert_noeviction()` startup check), `ScriptLoader` (load / execute with NOSCRIPT → re-EVAL once → raise `ScriptMissingError`)
 - `sentinel/lua.py` — `TOKEN_BUCKET_SCRIPT`, `SLIDING_WINDOW_SCRIPT`, `SCRIPT_NAMES`, `script_source(name)`; sources in `sentinel/lua/*.lua`
-- `sentinel/limiter.py` — `RateLimiter.evaluate(policy, key)`, `TokenBucketStrategy`, `SlidingWindowStrategy`, `build_bucket_key(tenant_id, endpoint_id, policy_version)`; Phase 8–10 wiring: breaker check → strategy → RedisError classification (fail-closed → `FAIL_CLOSED`, fail-open → emergency limiter). `RateLimiter` requires explicit `breaker` and `emergency` dependencies.
+- `sentinel/limiter.py` — `RateLimiter.evaluate(policy, key)`, `TokenBucketStrategy`, `SlidingWindowStrategy`, `build_bucket_key(tenant_id, endpoint_id, policy_version)`, `hash_tenant(tenant_id)`; Phase 8–10 wiring: breaker check → strategy → RedisError classification (fail-closed → `FAIL_CLOSED`, fail-open → emergency limiter). `RateLimiter` requires explicit `breaker` and `emergency` dependencies.
 - `sentinel/errors.py` — `classify_redis_error(exc) -> DecisionReason` (timeout → `REDIS_TIMEOUT`, connection → `REDIS_CONNECTION_ERROR`, `ScriptMissingError` → `REDIS_NOSCRIPT_RETRY`); `ScriptMissingError` (NOSCRIPT re-load exhaustion; raised by `ScriptLoader`). Programming errors (KeyError, etc.) are never caught.
 - `sentinel/circuit_breaker.py` — per-process CLOSED/OPEN/HALF-OPEN breaker (`CircuitBreaker`, `FAILURE_THRESHOLD`, `OPEN_TIMEOUT_SECONDS`); OPEN short-circuits before Redis; only genuine Redis successes reset `failure_count`. Injected `now` clock for tests.
 - `sentinel/emergency.py` — `TokenBucketEmergencyLimiter` (per-process, endpoint-keyed token bucket; capacity = refill rate = `fallback_rate_per_process_micro`); deliberately uses the local monotonic clock — documented exception to the Redis-clock invariant, since it runs precisely when Redis is unreachable. `EmergencyOutcome(allowed, remaining_micro, retry_after_seconds)`, `EmergencyLimiter` protocol.
 - `sentinel/algorithms.py` — pure Python reference functions (`token_bucket_evaluate`, `sliding_window_evaluate`) used to validate the Lua scripts
 - `sentinel/auth.py` — `verify_bearer_token(token, secret, algorithms) -> sub`, `AuthenticationError`, `AuthReason`
-- `sentinel/http.py` — `SentinelGuard` FastAPI integration: `guard_for(endpoint_id)` dependency; `await guard.load_scripts()` required before first request; denied reasons map to 429 (with `Retry-After`) or 503 (`_denied_status`, `_HTTP_429_REASONS`, `_HTTP_503_REASONS`)
-- `tests/` — 18 files, 264 tests (22 `security`-marked; see Testing below)
-- `docs/` — `sentinel-project-record.md` (canonical, V1 spec frozen; `vision.md` superseded), `implementation_plan.md` (phase roadmap), `phase-11-plan.md` (the executed Phase 11 plan; template for future phase plans), `phase-8-10-summary.md`, `assets/*.svg`
+- `sentinel/observability.py` — `SentinelObservability` (injected into `SentinelGuard`, like `breaker`/`emergency`): `record_decision(tenant_hash, endpoint_id, decision, latency_micro, breaker_state)` emits a WARNING deny log (structured `extra` fields; never raw tenant) and increments `sentinel_decisions_total` + `sentinel_evaluate_latency_microseconds`, both labeled ONLY by `endpoint_id`/`decision_reason`. Process-wide collectors registered once on the default registry; injectable `logger`/`registry` for tests.
+- `sentinel/http.py` — `SentinelGuard` FastAPI integration: `guard_for(endpoint_id)` dependency; `await guard.load_scripts()` required before first request; denied reasons map to 429 (with `Retry-After`) or 503 (`_denied_status`, `_HTTP_429_REASONS`, `_HTTP_503_REASONS`); Phase 12 emits decision telemetry (latency measured around `limiter.evaluate`).
+- `tests/` — 19 files, 277 tests (23 `security`-marked; see Testing below)
+- `docs/` — `sentinel-project-record.md` (canonical, V1 spec frozen; `vision.md` superseded), `implementation_plan.md` (phase roadmap), `phase-12-plan.md` (the executed Phase 12 plan), `phase-11-plan.md` (the executed Phase 11 plan; template for future phase plans), `phase-8-10-summary.md`, `assets/*.svg`
 - `docker-compose.yml` — Redis 7 with `noeviction` + bounded `maxmemory` (required config)
 - `sentinel.example.json` — example config
 - `.github/workflows/ci.yml` — lint job (ruff check / format / mypy), test job (pytest `-m "not slow"`, real Redis service), security job (`pytest -m security`, real Redis service)
@@ -48,7 +49,7 @@ two services with deliberately different policy semantics:
 ## Verified quality gates (all green at last run)
 
 ```
-pytest                                  # 264 passed (incl. integration tests against real Redis)
+pytest                                  # 277 passed (incl. integration tests against real Redis)
 pytest --cov=sentinel --cov-report=term-missing   # 100% coverage
 mypy sentinel                           # strict, clean
 ruff check .                            # clean
@@ -58,12 +59,34 @@ pre-commit run --all-files              # clean
 
 - Dev deps: `pip install -e ".[dev]"` (pytest, pytest-asyncio, mypy strict, ruff, pre-commit, coverage, redis, fastapi, uvicorn, httpx, pyjwt, pydantic).
 - Integration tests (`pytestmark = pytest.mark.integration`) need real Redis; the `redis_client` fixture in `tests/conftest.py` uses `SENTINEL_REDIS_URL` (default `redis://localhost:6379/0`) and auto-skips when Redis is unreachable.
-- Security regression tests (`pytest -m security`, 22 tests: `tests/test_security.py` + security-tagged tests in `test_http.py`/`test_circuit_breaker.py`/`test_models.py`/`test_redis.py`) run in a dedicated CI job and require real Redis for the tagged noeviction checks.
+- Security regression tests (`pytest -m security`, 23 tests: `tests/test_security.py` + security-tagged tests in `test_http.py`/`test_circuit_breaker.py`/`test_models.py`/`test_redis.py`/`test_observability.py`) run in a dedicated CI job and require real Redis for the tagged noeviction checks.
 - If shell file reads ever look corrupted, verify against git objects (`git cat-file -p HEAD:<path>`) or the working tree via pytest rather than trusting the first view.
 
 ## Work history (most recent first)
 
-1. **Completed Phase 11 security hardening (branch `test/security-hardening`, merged via PR #12, commit f5e1d5b):**
+1. **Completed Phase 12 observability (branch `feat/observability`, merged via PR #13, commit dbbb26c):**
+   - `sentinel/observability.py` — `SentinelObservability.record_decision(tenant_hash, endpoint_id,
+     decision, latency_micro, breaker_state)`: WARNING structured log on deny only (fields:
+     `tenant_hash` — never raw tenant id, `endpoint_id`, `decision_reason`, `latency_micro`,
+     `breaker_state`); Prometheus `sentinel_decisions_total` counter + `sentinel_evaluate_latency_microseconds`
+     histogram labeled ONLY by `endpoint_id`/`decision_reason`. Process-wide collectors registered
+     once on the default registry; injectable `logger`/`registry` for tests.
+   - Wired into `SentinelGuard` as an explicit injected dependency (like `breaker`/`emergency`);
+     latency measured around `limiter.evaluate` with `perf_counter_ns`. 401/404 paths emit nothing
+     (auth failures never produce a `DecisionReason`). Fail-open ALLOWED-by-emergency decisions
+     count as metrics but get no log line.
+   - Extracted `hash_tenant(tenant_id)` in `sentinel/limiter.py` (shared by `build_bucket_key` and
+     the guard); `build_bucket_key` stays a pure function of its inputs (SEC-08 tripwire intact).
+   - `prometheus-client>=0.20` added as a runtime dep (`pyproject.toml`) and to the pre-commit mypy
+     hook's `additional_dependencies`.
+   - `tests/test_observability.py` (13 tests, `test_obs_<n>_...`, Redis-free, FakeLoader-based):
+     counter/label semantics, deny-log fields via caplog (raw tenant absent), no-log-on-allow,
+     fail-open nuances, 401/404/unloaded-scripts emit nothing, bounded labelnames tripwire, and the
+     live SEC-08 cardinality-bomb test (`security`-marked): dynamic sub-paths + endpoint-lookalike
+     query strings under one guarded catch-all route emit exactly one `endpoint_id` label value.
+   - Docs: `docs/phase-12-plan.md`; project record §07 gained a "Phase 12 observability verification"
+     note and §11 status updated; Phase 12 ticked in the implementation-plan checklist.
+2. **Completed Phase 11 security hardening (branch `test/security-hardening`, merged via PR #12, commit f5e1d5b):**
    - Test + docs only; zero production-code changes. `tests/test_security.py` (12 tests, `test_sec_<n>_...` naming mirroring the §07 findings table, all `security`-marked) covers SEC-01 (no client-controlled `cost`: Policy/model/source/Lua tripwires), SEC-02 (Lua TTL-only: `EXPIRE`/`PEXPIRE` present, no `DEL`/`UNLINK`/`KEYS`/`SCAN`/`FLUSHALL`/`FLUSHDB` calls), SEC-03 (tenant spoofing: header-without-token 401 + identical spoof header never overrides `sub`), SEC-05 (breaker isolation across guards), SEC-08 (structural `inspect.getsource` tripwires on `SentinelGuard.guard_for`/`build_bucket_key` + behavioral URL/query-injection test). SEC-04 (JWT replay) and SEC-06 (Redis Cluster) are documented decisions, not tests.
    - Tagged 10 existing tests with `@pytest.mark.security` (integration markers preserved on the three `test_redis.py` noeviction checks); added a missing `import pytest` to `test_circuit_breaker.py`.
    - `pyproject.toml` now uses `--strict-markers`; `.github/workflows/ci.yml` gained a dedicated `security` job running `pytest -m security` against the shared Redis service.
@@ -115,16 +138,15 @@ pre-commit run --all-files              # clean
 
 ## Where things stand
 
-- Branch `main`, clean working tree, `HEAD == origin/main` (24259e9). Phases 0–11 merged (PRs #9–#12);
-  stale feature branches (local and remote) pruned. The post-merge docs commit `24259e9`
-  ("docs: record phase-11 completion and summary") holds the AGENTS.md/checklist/project-record updates
-  and `docs/phase-11-plan.md`.
-- **Implemented:** phases 0–11 of the plan. `DecisionReason` (8 members) is fully exercised:
+- Branch `main`, clean working tree, `HEAD == origin/main` (dbbb26c). Phases 0–12 merged (PRs #9–#13);
+  stale feature branches (local and remote) pruned. The post-merge docs commit `dbbb26c`
+  ("feat(observability): phase-12 structured logs and bounded metrics (#13)") holds the Phase 12
+  work; AGENTS.md/checklist/project-record updates land in the sanctioned follow-up docs commit.
+- **Implemented:** phases 0–12 of the plan. `DecisionReason` (8 members) is fully exercised:
   all failure paths produce decisions and the HTTP layer maps them to 429/503. §07 security
-  findings are locked in by 22 `security`-marked regression tests (dedicated CI job).
+  findings are locked in by 23 `security`-marked regression tests (dedicated CI job), including
+  the Phase 12 live metrics cardinality assertion.
 - **Not yet implemented (next work, per plan):**
-  - Phase 12 observability — structured logs on deny; Prometheus metrics bounded to
-    `endpoint_id`/`decision_reason` (includes the live metrics cardinality bomb test deferred from Phase 11).
   - Phase 13 concurrency/failure-injection tests (the plan's `slow` marker suite — no
     `slow`-marked tests exist yet), Phases 14–18 benchmarks/docs/packaging/integration/release.
 
