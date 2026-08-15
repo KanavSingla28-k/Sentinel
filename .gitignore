@@ -10,6 +10,9 @@ dist/
 .venv/
 venv/
 
+# Benchmark outputs
+benchmarks/results/
+
 # Tooling caches
 .ruff_cache/
 .mypy_cache/
