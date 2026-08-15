@@ -205,6 +205,24 @@ The four §09 invariants are now also proven under concurrency (`pytest -m slow`
 - **Emergency cap under fail-open load.** Under concurrent Redis failure the emergency limiter admits exactly one burst token (`fallback_rate_per_process_micro`) and denies the rest with `EMERGENCY_LOCAL_LIMIT`; Redis itself never admits more than capacity even when some evaluations time out (atomicity holds at the boundary too).
 - **Determinism note.** SentinelRedis hardcodes a 20 ms socket budget; a Windows/WSL2 loopback cannot sustain ≥20 simultaneous connections within it (measured), so the strict assertions run under an in-flight semaphore (4) and the unbounded 50-coroutine stress asserts the failure-tolerant invariants above plus a strict branch when no failure reasons appear. The dead-port client surfaces as `REDIS_CONNECTION_ERROR` on Linux and `REDIS_TIMEOUT` on Windows/WSL2 — both are accepted failure classes for that path. The emergency limiter remains documented per-process (V1).
 
+### Phase 14 benchmark verification
+
+A dependency-free harness (`benchmarks/benchmark.py`, `docs/phase-14-plan.md`) records the
+baseline (`docs/benchmark-results.md`): with-Sentinel overhead ≈ 5.2× throughput at c=1 (p50
+150 → 827 µs, one loopback Redis round trip dominating), breaker short-circuit ≈ 7 µs p50
+(~96k ops/s), and failure-path latency ≈ the ~31 ms dead-port socket timeout (p99 ≈ 27 ms) —
+the limiter itself is not the failure-path cost. Numbers are single-machine loopback, disclosed
+as-is; no thresholds asserted.
+
+The benchmark surfaced one production defect, deliberately **not** fixed in the benchmark-only
+phase: the fail-open emergency limiter double-refills on denied calls (`emergency.py` persists
+`tokens_after` while `last_refill_micro` only advances on ALLOW — the Lua's "denied requests
+never write" contract is violated), admitting up to ~2.3× the configured
+`fallback_rate_per_process_micro` under sustained Redis failure (decisive experiment: Lua allows
+at 0.0/1.10/2.19 s, emergency at 0.0/0.44/0.87/1.32/1.76/2.19/2.63 s at 1 token/s). The fix
+ships as a separate PR; until then fail-open deployments should treat the fallback rate as
+approximate under sustained outages.
+
 ---
 
 ## 10 · Deferred to V2
@@ -227,13 +245,15 @@ Feasible, and no longer theoretically feasible — every P0 issue found across t
 | Testing & benchmarking | 3–7 days |
 | Integration & documentation | 2–4 days |
 
-> **Status.** Implementation phases 0–13 complete. Phase 11 (PR #12) locked in every §07 finding
+> **Status.** Implementation phases 0–14 complete. Phase 11 (PR #12) locked in every §07 finding
 > with a `security`-marked regression test or an explicit documented boundary; Phase 12 shipped
 > structured deny logging (`tenant_hash`, reason, latency, breaker state) and bounded
 > `endpoint_id`/`decision_reason` Prometheus metrics, plus the live SEC-08 cardinality assertion;
 > Phase 13 proved the §09 invariants under concurrency and real failure injection (`slow` suite,
-> dedicated CI job).
-> Next: the Phase 14 benchmarking phase.
+> dedicated CI job); Phase 14 delivered the benchmark harness and baseline
+> (`docs/benchmark-results.md`) and surfaced one fail-open defect (emergency-limiter double-refill,
+> ~2.3× fallback rate under sustained failure) whose fix ships as a separate PR.
+> Next: the Phase 15 documentation phase, plus the emergency-limiter fix PR.
 
 > **Next.** Not another document. Build V1 against this spec, then kill Redis mid-traffic and run concurrent requests across 3 instances — the real adversarial test is load, not a fourth review.
 
