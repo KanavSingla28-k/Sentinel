@@ -24,6 +24,7 @@ from sentinel.http import (
 from sentinel.limiter import build_bucket_key
 from sentinel.lua import SLIDING_WINDOW_SCRIPT, TOKEN_BUCKET_SCRIPT
 from sentinel.models import AlgorithmType, Decision, DecisionReason, FailMode, Policy
+from sentinel.observability import SentinelObservability
 from sentinel.redis import ScriptLoader, SentinelRedis
 
 SECRET = "test-secret-0123456789abcdef0123456789abcdef"
@@ -109,6 +110,7 @@ def _make_app(
     *,
     breaker: CircuitBreaker | None = None,
     emergency: EmergencyLimiter | None = None,
+    observability: SentinelObservability | None = None,
 ) -> tuple[FastAPI, SentinelGuard, FakeLoader]:
     loader = FakeLoader()
     config = _config(allowlist, tb_rate)
@@ -118,6 +120,7 @@ def _make_app(
         cast(ScriptLoader, loader),
         breaker=breaker,
         emergency=emergency,
+        observability=observability,
     )
     app = FastAPI()
 
