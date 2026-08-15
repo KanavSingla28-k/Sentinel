@@ -29,11 +29,11 @@ two services with deliberately different policy semantics:
 - `sentinel/auth.py` — `verify_bearer_token(token, secret, algorithms) -> sub`, `AuthenticationError`, `AuthReason`
 - `sentinel/observability.py` — `SentinelObservability` (injected into `SentinelGuard`, like `breaker`/`emergency`): `record_decision(tenant_hash, endpoint_id, decision, latency_micro, breaker_state)` emits a WARNING deny log (structured `extra` fields; never raw tenant) and increments `sentinel_decisions_total` + `sentinel_evaluate_latency_microseconds`, both labeled ONLY by `endpoint_id`/`decision_reason`. Process-wide collectors registered once on the default registry; injectable `logger`/`registry` for tests.
 - `sentinel/http.py` — `SentinelGuard` FastAPI integration: `guard_for(endpoint_id)` dependency; `await guard.load_scripts()` required before first request; denied reasons map to 429 (with `Retry-After`) or 503 (`_denied_status`, `_HTTP_429_REASONS`, `_HTTP_503_REASONS`); Phase 12 emits decision telemetry (latency measured around `limiter.evaluate`).
-- `tests/` — 19 files, 277 tests (23 `security`-marked; see Testing below)
-- `docs/` — `sentinel-project-record.md` (canonical, V1 spec frozen; `vision.md` superseded), `implementation_plan.md` (phase roadmap), `phase-12-plan.md` (the executed Phase 12 plan), `phase-11-plan.md` (the executed Phase 11 plan; template for future phase plans), `phase-8-10-summary.md`, `assets/*.svg`
+- `tests/` — 21 files, 286 tests (23 `security`-marked, 9 `slow`-marked; see Testing below)
+- `docs/` — `sentinel-project-record.md` (canonical, V1 spec frozen; `vision.md` superseded), `implementation_plan.md` (phase roadmap), `phase-13-plan.md` (the executed Phase 13 plan; template for future phase plans), `phase-12-plan.md`, `phase-11-plan.md`, `phase-8-10-summary.md`, `assets/*.svg`
 - `docker-compose.yml` — Redis 7 with `noeviction` + bounded `maxmemory` (required config)
 - `sentinel.example.json` — example config
-- `.github/workflows/ci.yml` — lint job (ruff check / format / mypy), test job (pytest `-m "not slow"`, real Redis service), security job (`pytest -m security`, real Redis service)
+- `.github/workflows/ci.yml` — lint job (ruff check / format / mypy), test job (pytest `-m "not slow"`, real Redis service), security job (`pytest -m security`, real Redis service), slow job (`pytest -m slow`, real Redis service)
 
 ## Non-negotiable invariants (do not "fix")
 
@@ -64,7 +64,28 @@ pre-commit run --all-files              # clean
 
 ## Work history (most recent first)
 
-1. **Completed Phase 12 observability (branch `feat/observability`, merged via PR #13, commit dbbb26c):**
+1. **Completed Phase 13 concurrency/failure-injection tests (branch `test/concurrency-phase13`, merged via PR #14, commit c173c90):**
+   - `tests/test_concurrency.py` (6 tests, `test_conc_<n>_...`, all `slow`-marked) — 50-coroutine
+     races on shared real-Redis keys: token-bucket exact capacity (`refill_rate=0`, invariant #6),
+     sliding-window bound vs the pure reference (never exact equality), unbounded 50-coroutine
+     stress asserting failure-tolerant invariants, fake-loader emergency cap (exactly 1 burst token
+     admitted, 49 `EMERGENCY_LOCAL_LIMIT`, breaker OPEN), fail-closed all-denied, and real dead-port
+     failure injection (breaker OPEN, emergency cap, fail-closed counterpart).
+   - `tests/test_concurrency_multiprocess.py` (2 tests) — 3 spawned processes share one bucket via
+     `mp.get_context("spawn")` + Barrier + `mp.Queue`; distributed atomicity invariants
+     (`redis_total <= capacity`, `emergency_total <= PROCESS_COUNT`, strict equality on healthy
+     Redis); spawn smoke check.
+   - **Determinism design record** (in `docs/phase-13-plan.md`): the hardcoded 20ms socket budget
+     cannot sustain >=20 simultaneous connections on Windows/WSL2 loopback (measured), so strict
+     assertions run under an in-flight semaphore (4) and unbounded bursts assert documented
+     fail-open invariants + a strict branch when no failure reasons appear; the dead-port client
+     surfaces as `REDIS_CONNECTION_ERROR` on Linux / `REDIS_TIMEOUT` on Windows/WSL2 (both
+     accepted for that path). Zero production-code changes; 100% coverage kept.
+   - `.github/workflows/ci.yml` gained a dedicated `slow` job (`pytest -m slow`, real Redis
+     service); PR #14 CI fully green (lint/test/security/slow).
+   - Docs: `docs/phase-13-plan.md` (executed plan), project record §09 "Phase 13 concurrency
+     verification" + §11 status, Phase 13 ticked in the implementation-plan checklist.
+2. **Completed Phase 12 observability (branch `feat/observability`, merged via PR #13, commit dbbb26c):**
    - `sentinel/observability.py` — `SentinelObservability.record_decision(tenant_hash, endpoint_id,
      decision, latency_micro, breaker_state)`: WARNING structured log on deny only (fields:
      `tenant_hash` — never raw tenant id, `endpoint_id`, `decision_reason`, `latency_micro`,
@@ -138,17 +159,19 @@ pre-commit run --all-files              # clean
 
 ## Where things stand
 
-- Branch `main`, clean working tree, `HEAD == origin/main` (dbbb26c). Phases 0–12 merged (PRs #9–#13);
-  stale feature branches (local and remote) pruned. The post-merge docs commit `dbbb26c`
-  ("feat(observability): phase-12 structured logs and bounded metrics (#13)") holds the Phase 12
+- Branch `main`, clean working tree, `HEAD == origin/main` (c173c90). Phases 0–13 merged (PRs #9–#14);
+  stale feature branches (local and remote) pruned. The post-merge docs commit `c173c90`
+  ("test(concurrency): phase-13 concurrency and failure-injection suite (#14)") holds the Phase 13
   work; AGENTS.md/checklist/project-record updates land in the sanctioned follow-up docs commit.
-- **Implemented:** phases 0–12 of the plan. `DecisionReason` (8 members) is fully exercised:
+- **Implemented:** phases 0–13 of the plan. `DecisionReason` (8 members) is fully exercised:
   all failure paths produce decisions and the HTTP layer maps them to 429/503. §07 security
   findings are locked in by 23 `security`-marked regression tests (dedicated CI job), including
-  the Phase 12 live metrics cardinality assertion.
+  the Phase 12 live metrics cardinality assertion. The §09 invariants are proven under
+  concurrency: exact in-process and cross-process capacity, sliding-window reference bound,
+  breaker OPEN under load, emergency cap (9 `slow`-marked tests, dedicated CI job).
 - **Not yet implemented (next work, per plan):**
-  - Phase 13 concurrency/failure-injection tests (the plan's `slow` marker suite — no
-    `slow`-marked tests exist yet), Phases 14–18 benchmarks/docs/packaging/integration/release.
+  - Phases 14–18 benchmarks/docs/packaging/integration/release. Phase 14 (benchmarking: p50/p95/p99
+    overhead, failure-path latency) is the next phase.
 
 ## Conventions
 
