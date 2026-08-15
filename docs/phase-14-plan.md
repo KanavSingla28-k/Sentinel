@@ -183,6 +183,13 @@ history + "Where things stand" (phases 0–14 complete; benchmark harness + base
   the measured batch, erasing the very failure journey the cell exists to measure. The pre-trip
   cell (B7) covers breaker-OPEN; B8/B9 therefore start CLOSED and the measured counts include the
   real `redis_timeout → circuit_open` transition.
+- **Smoke test self-configures a bounded noeviction Redis.** The CI Redis service is a plain
+  `redis:7-alpine` container (no `maxmemory`), while the harness — like `SentinelRedis` in
+  production — refuses to start without a bounded `noeviction` policy. Following the
+  `tests/test_redis.py` precedent, the smoke test sets `maxmemory-policy=noeviction` +
+  `maxmemory=256 MB` on the shared fixture around the subprocess run and restores the prior
+  values in a `finally` block (the repo's docker-compose Redis already matches, so local runs
+  are a no-op restore).
 - **One production defect surfaced and deliberately NOT fixed in this phase.** The fail-open
   emergency limiter's sustained rate measures ~2.3× the configured
   `fallback_rate_per_process_micro` under repeated failure ops (double-refill: denied calls
