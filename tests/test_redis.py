@@ -27,6 +27,7 @@ def test_max_connections_is_not_configurable() -> None:
     assert params == ["self", "redis_url"]
 
 
+@pytest.mark.security
 async def test_startup_check_passes_on_noeviction_with_bounded_memory(
     redis_client: SentinelRedis,
 ) -> None:
@@ -35,6 +36,7 @@ async def test_startup_check_passes_on_noeviction_with_bounded_memory(
     await redis_client.assert_noeviction()
 
 
+@pytest.mark.security
 async def test_startup_check_fails_on_allkeys_lru(redis_client: SentinelRedis) -> None:
     await redis_client.client.config_set("maxmemory-policy", "allkeys-lru")
     try:
@@ -44,6 +46,7 @@ async def test_startup_check_fails_on_allkeys_lru(redis_client: SentinelRedis) -
         await redis_client.client.config_set("maxmemory-policy", NOEVICTION_POLICY)
 
 
+@pytest.mark.security
 async def test_startup_check_fails_when_maxmemory_unset(redis_client: SentinelRedis) -> None:
     await redis_client.client.config_set("maxmemory", 0)
     try:

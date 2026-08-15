@@ -37,7 +37,7 @@ sentinel = ["py.typed", "lua/*.lua"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q --strict-markers"
 markers = [
     "slow: slow suite run in a separate CI job (Phase 13)",
     "security: security regression tests (Phase 11)",

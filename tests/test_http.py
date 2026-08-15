@@ -230,6 +230,7 @@ def test_malformed_token_returns_401(tailor_env: tuple[FastAPI, SentinelGuard, F
     assert loader.calls == []
 
 
+@pytest.mark.security
 def test_x_tenant_id_header_is_ignored(
     tailor_env: tuple[FastAPI, SentinelGuard, FakeLoader],
 ) -> None:
@@ -341,6 +342,7 @@ def test_evaluation_before_script_loading_raises() -> None:
         TestClient(app).post("/a", headers={"Authorization": f"Bearer {token}"})
 
 
+@pytest.mark.security
 def test_endpoint_id_comes_from_dependency_not_url(
     tailor_env: tuple[FastAPI, SentinelGuard, FakeLoader],
 ) -> None:
@@ -462,6 +464,7 @@ def _tripped_breaker() -> CircuitBreaker:
     return breaker
 
 
+@pytest.mark.security
 async def test_circuit_open_fail_closed_returns_503_without_redis() -> None:
     app, guard, loader = _make_app("pdftalk.ingest", breaker=_tripped_breaker())
     await guard.load_scripts()
@@ -473,6 +476,7 @@ async def test_circuit_open_fail_closed_returns_503_without_redis() -> None:
     assert loader.calls == []
 
 
+@pytest.mark.security
 async def test_circuit_open_fail_open_routes_to_emergency() -> None:
     app, guard, loader = _make_app("resumint.tailor", breaker=_tripped_breaker())
     await guard.load_scripts()

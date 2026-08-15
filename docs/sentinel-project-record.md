@@ -140,6 +140,19 @@ Everything below was found in review, not assumed away.
 | Float drift in long-lived buckets | Review 3 | Integer microtokens adopted |
 | Metrics cardinality bomb | Review 2 | `endpoint_id` always an explicit configured id, never a raw path |
 
+### Accepted upstream boundaries (V1)
+
+**JWT replay is an accepted V1 boundary.** A replayed valid bearer token is indistinguishable from
+a legitimate request at the sentinel layer, so sentinel does not attempt to detect or prevent it.
+Sentinel's own requirements, which the host application must satisfy when issuing tokens, stay
+strict: tokens must carry both `exp` and `sub`, signatures must use a strict JWT algorithm
+allowlist, and sentinel keeps no token cache and holds no token state between requests. Replay
+mitigation lives upstream of sentinel: short-lived tokens, mTLS, and single-use/nonce enforcement
+at the issuing service.
+
+**Redis Cluster migration remains a V2 decision** (ADR-010): a single dedicated Redis instance with
+`noeviction` is a V1 invariant, not a limitation to be worked around in V1.
+
 ---
 
 ## 08 · Integrations

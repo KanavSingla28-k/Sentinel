@@ -1,5 +1,6 @@
 """Circuit breaker unit tests with an injected clock (Phase 9)."""
 
+import pytest
 from sentinel.circuit_breaker import (
     FAILURE_THRESHOLD,
     OPEN_TIMEOUT_SECONDS,
@@ -116,6 +117,7 @@ def test_probe_failure_starts_fresh_quarantine() -> None:
     assert breaker.state is BreakerState.HALF_OPEN
 
 
+@pytest.mark.security
 def test_breakers_are_per_process_isolated() -> None:
     clock = FakeClock()
     first = _breaker(clock)

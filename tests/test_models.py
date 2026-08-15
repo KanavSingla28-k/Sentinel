@@ -133,6 +133,7 @@ def test_rejects_zero_fallback_rate() -> None:
         make_policy(fallback_rate_per_process_micro=0)
 
 
+@pytest.mark.security
 def test_rejects_extra_fields() -> None:
     with pytest.raises(ValidationError):
         make_policy(cost=5)
@@ -252,6 +253,7 @@ def test_token_bucket_rejects_rate_above_lua_exactness_bound() -> None:
         )
 
 
+@pytest.mark.security
 def test_policy_micro_fields_are_integers() -> None:
     assert Policy.model_fields["capacity_micro"].annotation == (int | None)
     assert Policy.model_fields["refill_rate_micro_per_sec"].annotation == (int | None)
