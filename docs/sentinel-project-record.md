@@ -219,9 +219,18 @@ phase: the fail-open emergency limiter double-refills on denied calls (`emergenc
 `tokens_after` while `last_refill_micro` only advances on ALLOW — the Lua's "denied requests
 never write" contract is violated), admitting up to ~2.3× the configured
 `fallback_rate_per_process_micro` under sustained Redis failure (decisive experiment: Lua allows
-at 0.0/1.10/2.19 s, emergency at 0.0/0.44/0.87/1.32/1.76/2.19/2.63 s at 1 token/s). The fix
-ships as a separate PR; until then fail-open deployments should treat the fallback rate as
-approximate under sustained outages.
+at 0.0/1.10/2.19 s, emergency at 0.0/0.44/0.87/1.32/1.76/2.19/2.63 s at 1 token/s).
+
+**Fixed post-Phase-14 (PR #16, `fix/emergency-limiter-double-refill`):** `TokenBucketEmergencyLimiter`
+now persists bucket state only on ALLOW — a denied call leaves the state untouched and the next
+evaluation recomputes the refill over the full elapsed window since the last write, so each
+elapsed interval contributes exactly once and denied traffic cannot accelerate replenishment.
+Regression coverage: deterministic sustained-traffic tests (1/2/5 tokens/s at 100 ms cadence:
+allows == capacity + elapsed × rate exactly), a denied-calls-no-acceleration test, a full-journey
+fail-open test through `RateLimiter`, and the parity test now applies no-write-on-deny to the
+reference state. Verified end-to-end on the dead-port benchmark journey (1 token/s, 100 ms
+cadence, 5 s: exactly 6 allows at ≈1.1 s spacing) and by a full benchmark re-run (all 18 cells
+within noise of the baseline; B8/B9 failure-path p99 ≈ 26 ms unchanged).
 
 ---
 
@@ -252,8 +261,10 @@ Feasible, and no longer theoretically feasible — every P0 issue found across t
 > Phase 13 proved the §09 invariants under concurrency and real failure injection (`slow` suite,
 > dedicated CI job); Phase 14 delivered the benchmark harness and baseline
 > (`docs/benchmark-results.md`) and surfaced one fail-open defect (emergency-limiter double-refill,
-> ~2.3× fallback rate under sustained failure) whose fix ships as a separate PR.
-> Next: the Phase 15 documentation phase, plus the emergency-limiter fix PR.
+> ~2.3× fallback rate under sustained failure). That defect is now fixed (PR #16) — the emergency
+> limiter mirrors the Lua's no-write-on-deny, sustained fallback allowance matches the configured
+> rate, and the post-fix benchmark re-run shows no regression.
+> Next: the Phase 15 documentation phase.
 
 > **Next.** Not another document. Build V1 against this spec, then kill Redis mid-traffic and run concurrent requests across 3 instances — the real adversarial test is load, not a fourth review.
 

@@ -65,7 +65,32 @@ pre-commit run --all-files              # clean
 
 ## Work history (most recent first)
 
-1. **Completed Phase 14 benchmarking (branch `bench/perf-phase14`, merged via PR #15, commit 351c5dc):**
+1. **Fixed the Phase 14 emergency-limiter double-refill defect (branch `fix/emergency-limiter-double-refill`):**
+   - Root cause: `TokenBucketEmergencyLimiter.evaluate` persisted `(tokens_after, last_refill_after)`
+     on every call, but `token_bucket_evaluate` advances `last_refill_micro` only on ALLOW (the
+     Lua's "denied requests never write" contract, `token_bucket.lua:8`). Each denied call banked
+     the partial refill of its elapsed window while the stored `last_refill_micro` stayed put, so
+     the next evaluation refilled the same window again on top of banked tokens — sustained
+     fail-open allowance reached ~2.3× the configured `fallback_rate_per_process_micro`
+     (measured: 8 allows in 3 s at 1 token/s, 100 ms cadence, vs the expected 4).
+   - Fix (`sentinel/emergency.py`): write bucket state only on ALLOW. A denied call leaves the
+     state untouched; the next evaluation recomputes the refill over the full elapsed window since
+     the last write, so every elapsed interval contributes exactly once and denied traffic cannot
+     accelerate replenishment. No API/behavior change outside the emergency path.
+   - Regression coverage: deterministic injected-clock sustained-traffic tests in
+     `tests/test_emergency.py` (initial burst + immediate deny; 1/2/5 tokens/s at 100 ms cadence —
+     allows == capacity + elapsed × rate exactly; denied-calls-no-acceleration), an end-to-end
+     fail-open test through `RateLimiter` in `tests/test_limiter.py`, and the parity test now
+     applies no-write-on-deny to the reference state (it previously stored every evaluation
+     unconditionally — self-consistent with the bug it hid).
+   - Verification: dead-port benchmark journey at 1 token/s, 100 ms cadence over 5 s allows
+     exactly 6 (burst + 5 refills ≈1.1 s spacing); full `benchmarks/benchmark.py` re-run — all 18
+     cells within noise of the baseline (B2 c=1 p50 826 vs 827 µs; B7 ~96.4k ops/s; B8/B9 p99
+     ≈ 26 ms), B8 counts drop from 8 phantom allows/batch to exactly the initial burst per rep,
+     B9 fail-closed counts unchanged. Full suite 293 passed, 100% coverage, ruff/mypy clean.
+   - Docs: `docs/benchmark-results.md` "Fix status" section, `docs/phase-14-plan.md` follow-up
+     bullet, project record §09/§11.
+2. **Completed Phase 14 benchmarking (branch `bench/perf-phase14`, merged via PR #15, commit 351c5dc):**
    - `benchmarks/benchmark.py` — dependency-free stdlib harness (no new deps): cells B1–B9 ×
      concurrency {1,8} (unguarded / with-Sentinel token-bucket + sliding-window / detached /
      auth+decide / breaker-OPEN short-circuit / dead-port fail-open + fail-closed); p50/p95/p99
@@ -206,11 +231,10 @@ pre-commit run --all-files              # clean
   dedicated CI job). Phase 14 baseline recorded in `docs/benchmark-results.md` (harness in
   `benchmarks/benchmark.py`); the benchmark surfaced one fail-open defect (emergency limiter
   double-refill, ~2.3× fallback rate under sustained failure) disclosed in
-  `docs/benchmark-results.md` + project record §09.
+  `docs/benchmark-results.md` + project record §09 — **fixed** (no-write-on-deny in
+  `sentinel/emergency.py`, sustained-rate regression tests, post-fix benchmark re-run with no
+  regression; see work-history entry 1).
 - **Not yet implemented (next work):**
-  - The emergency-limiter fix PR (mirror the Lua's no-write-on-deny in `sentinel/emergency.py`,
-    update the self-consistent parity test, add a sustained-denial regression test) — disclosed
-    in `docs/benchmark-results.md`, per the benchmark-only Phase 14 scope.
   - Phases 15–18 docs/packaging/integration/release. Phase 15 (documentation: README, Known
     Limitations) is the next phase.
 

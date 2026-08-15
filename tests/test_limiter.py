@@ -336,6 +336,33 @@ async def test_fail_open_tiny_fallback_denies_with_emergency_limit() -> None:
     assert decision.retry_after_seconds == (TOKENS_PER_TOKEN_MICRO - 2_000) / 2_000
 
 
+async def test_fail_open_sustained_failure_matches_fallback_rate() -> None:
+    """Phase 14 regression through the full fail-open journey.
+
+    Sustained Redis failure with fallback rate = 1 token/s at a 100 ms cadence
+    over 3 s must admit exactly the initial burst plus one token per elapsed
+    second (steps 0/10/20/30). The pre-fix emergency limiter admitted at steps
+    0/4/8/... (~2.3x the configured rate).
+    """
+    loader = FakeLoader({})
+    loader.set_exception("token_bucket", RedisTimeoutError("timeout"))
+    clock = FakeMicroClock()
+    limiter = _limiter(
+        loader,
+        emergency=TokenBucketEmergencyLimiter(now_micro=clock),
+    )
+    policy = _token_bucket_policy(
+        fail_mode=FailMode.FAIL_OPEN,
+        fallback_rate_per_process_micro=TOKENS_PER_TOKEN_MICRO,
+    )
+    allowed_steps: list[int] = []
+    for step in range(31):
+        if (await limiter.evaluate(policy, "sentinel:v1:k")).allowed:
+            allowed_steps.append(step)
+        clock.advance(100_000)
+    assert allowed_steps == [0, 10, 20, 30]
+
+
 async def test_non_redis_exceptions_propagate() -> None:
     loader = FakeLoader({})
     loader.set_exception("token_bucket", KeyError("unloaded script"))
@@ -369,6 +396,17 @@ class FakeClock:
         self.value += seconds
 
     def __call__(self) -> float:
+        return self.value
+
+
+class FakeMicroClock:
+    def __init__(self, start: int = 1_700_000_000_000_000_000) -> None:
+        self.value = start
+
+    def advance(self, micro: int) -> None:
+        self.value += micro
+
+    def __call__(self) -> int:
         return self.value
 
 
