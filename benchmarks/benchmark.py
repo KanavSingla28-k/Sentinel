@@ -26,12 +26,12 @@ import jwt
 from fastapi import Depends, FastAPI, Request
 from pydantic import SecretStr
 from sentinel.algorithms import TOKENS_PER_TOKEN_MICRO
-from sentinel.circuit_breaker import CircuitBreaker
+from sentinel.circuit_breaker import BreakerState, CircuitBreaker
 from sentinel.config import AppConfig, SentinelConfig
 from sentinel.emergency import TokenBucketEmergencyLimiter
 from sentinel.http import SentinelGuard
 from sentinel.limiter import RateLimiter, build_bucket_key
-from sentinel.lua import TOKEN_BUCKET_SCRIPT, load_scripts
+from sentinel.lua import TOKEN_BUCKET_SCRIPT, load_scripts, script_source
 from sentinel.models import AlgorithmType, FailMode, Policy
 from sentinel.redis import ScriptLoader, SentinelRedis
 
@@ -47,6 +47,7 @@ BATCH_OPS = 100
 WARMUP_OPS = 100
 REPS = 3
 CONCURRENCIES = (1, 8)
+DEAD_REDIS_URL = "redis://localhost:6399/0"
 OP_COUNTS = {"http": 2_000, "limiter": 5_000, "redis": 10_000, "failure": 500}
 SMOKE_OP_COUNTS = {"http": 50, "limiter": 50, "redis": 50, "failure": 20}
 
@@ -329,6 +330,19 @@ def _rep_result(spec: CellSpec, measurement: Measurement) -> dict[str, Any]:
     }
 
 
+def _dead_limiter() -> tuple[RateLimiter, CircuitBreaker]:
+    loader = ScriptLoader(SentinelRedis(DEAD_REDIS_URL).client)
+    loader._sources[TOKEN_BUCKET_SCRIPT] = script_source(TOKEN_BUCKET_SCRIPT)
+    loader._shas[TOKEN_BUCKET_SCRIPT] = "sha-dead"
+    breaker = CircuitBreaker()
+    limiter = RateLimiter(
+        loader,
+        breaker=breaker,
+        emergency=TokenBucketEmergencyLimiter(),
+    )
+    return limiter, breaker
+
+
 async def _run_rep(
     spec: CellSpec, live_redis: SentinelRedis, redis_url: str, rep_id: str
 ) -> dict[str, Any]:
@@ -373,6 +387,22 @@ async def _run_rep(
             _redis_worker(loader, f"{rep_id}-warmup", index) for index in range(spec.concurrency)
         ]
         return await _run_measured(spec, live_redis, measured, warmup)
+    if spec.path == "failure":
+        assert spec.policy is not None
+        limiter, breaker = _dead_limiter()
+        if spec.id == "B7":
+            trip_key = build_bucket_key(f"bench-{rep_id}-trip", ENDPOINT_ID, POLICY_VERSION)
+            while breaker.state is not BreakerState.OPEN:
+                await limiter.evaluate(spec.policy, trip_key)
+        measured = [
+            _limiter_worker(limiter, spec.policy, rep_id, index)
+            for index in range(spec.concurrency)
+        ]
+        warmup = [
+            _limiter_worker(limiter, spec.policy, f"{rep_id}-warmup", index)
+            for index in range(spec.concurrency)
+        ]
+        return await _run_measured(spec, None, measured, warmup)
     raise ValueError(f"no runner for cell path {spec.path!r}")
 
 
@@ -398,6 +428,7 @@ def _policy_brief(policy: Policy | None) -> dict[str, Any]:
 
 def _build_cells(op_counts: dict[str, int]) -> list[CellSpec]:
     fail_open = _token_bucket_policy(FailMode.FAIL_OPEN)
+    fail_closed = _token_bucket_policy(FailMode.FAIL_CLOSED)
     sliding = _sliding_window_policy()
     cells: list[CellSpec] = []
     for concurrency in CONCURRENCIES:
@@ -477,6 +508,45 @@ def _build_cells(op_counts: dict[str, int]) -> list[CellSpec]:
                 op_counts["redis"],
                 WARMUP_OPS,
                 fail_open,
+            )
+        )
+        cells.append(
+            CellSpec(
+                "B7",
+                "breaker OPEN short-circuit",
+                "failure",
+                "token_bucket",
+                "dead",
+                concurrency,
+                op_counts["failure"],
+                WARMUP_OPS,
+                fail_open,
+            )
+        )
+        cells.append(
+            CellSpec(
+                "B8",
+                "fail-open dead Redis",
+                "failure",
+                "token_bucket",
+                "dead",
+                concurrency,
+                op_counts["failure"],
+                0,
+                fail_open,
+            )
+        )
+        cells.append(
+            CellSpec(
+                "B9",
+                "fail-closed dead Redis",
+                "failure",
+                "token_bucket",
+                "dead",
+                concurrency,
+                op_counts["failure"],
+                0,
+                fail_closed,
             )
         )
     return cells
