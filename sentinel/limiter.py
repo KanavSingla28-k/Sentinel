@@ -34,12 +34,16 @@ from sentinel.models import (
 from sentinel.redis import ScriptLoader
 
 
+def hash_tenant(tenant_id: str) -> str:
+    return hashlib.sha256(tenant_id.encode("utf-8")).hexdigest()
+
+
 def build_bucket_key(
     tenant_id: str,
     endpoint_id: str,
     policy_version: int,
 ) -> str:
-    tenant_hash = hashlib.sha256(tenant_id.encode("utf-8")).hexdigest()
+    tenant_hash = hash_tenant(tenant_id)
     return f"sentinel:v1:{tenant_hash}:{endpoint_id}:{policy_version}"
 
 

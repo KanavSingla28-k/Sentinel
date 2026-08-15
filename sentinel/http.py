@@ -8,6 +8,7 @@ rate-limit denials are 429 with Retry-After, store-failure denials are 503.
 """
 
 import math
+import time
 from collections.abc import Awaitable, Callable
 
 from fastapi import HTTPException, Request, status
@@ -16,9 +17,10 @@ from sentinel.auth import AuthenticationError, verify_bearer_token
 from sentinel.circuit_breaker import CircuitBreaker
 from sentinel.config import SentinelConfig
 from sentinel.emergency import EmergencyLimiter, TokenBucketEmergencyLimiter
-from sentinel.limiter import RateLimiter, build_bucket_key
+from sentinel.limiter import RateLimiter, build_bucket_key, hash_tenant
 from sentinel.lua import load_scripts as load_lua_scripts
 from sentinel.models import DecisionReason
+from sentinel.observability import SentinelObservability
 from sentinel.redis import ScriptLoader, SentinelRedis
 from sentinel.resolver import StaticPolicyResolver
 
@@ -77,6 +79,7 @@ class SentinelGuard:
         *,
         breaker: CircuitBreaker | None = None,
         emergency: EmergencyLimiter | None = None,
+        observability: SentinelObservability | None = None,
     ) -> None:
         self._config = config
         self._redis = redis
@@ -88,6 +91,7 @@ class SentinelGuard:
             breaker=self._breaker,
             emergency=emergency or TokenBucketEmergencyLimiter(),
         )
+        self._observability = observability or SentinelObservability()
         self._scripts_loaded = False
 
     async def load_scripts(self) -> None:
@@ -116,7 +120,16 @@ class SentinelGuard:
                     "call await guard.load_scripts() before evaluating requests"
                 )
             key = build_bucket_key(tenant_id, policy.endpoint_id, policy.policy_version)
+            started = time.perf_counter_ns()
             decision = await self._limiter.evaluate(policy, key)
+            latency_micro = (time.perf_counter_ns() - started) // 1_000
+            self._observability.record_decision(
+                tenant_hash=hash_tenant(tenant_id),
+                endpoint_id=policy.endpoint_id,
+                decision=decision,
+                latency_micro=latency_micro,
+                breaker_state=self._breaker.state,
+            )
             request.state.decision = decision
             if not decision.allowed:
                 if _denied_status(decision.reason) == status.HTTP_429_TOO_MANY_REQUESTS:

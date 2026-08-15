@@ -268,7 +268,7 @@ Must be read and understood before executing their respective phases:
 - [ ] Phase 9: Circuit breaker
 - [ ] Phase 10: Emergency local limiter
 - [x] Phase 11: Security hardening pass
-- [ ] Phase 12: Observability & metrics
+- [x] Phase 12: Observability & metrics
 - [ ] Phase 13: Full concurrency/failure test suite
 - [ ] Phase 14: Benchmarking
 - [ ] Phase 15: Documentation
