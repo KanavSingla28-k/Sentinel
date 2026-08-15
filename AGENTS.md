@@ -28,11 +28,11 @@ two services with deliberately different policy semantics:
 - `sentinel/algorithms.py` — pure Python reference functions (`token_bucket_evaluate`, `sliding_window_evaluate`) used to validate the Lua scripts
 - `sentinel/auth.py` — `verify_bearer_token(token, secret, algorithms) -> sub`, `AuthenticationError`, `AuthReason`
 - `sentinel/http.py` — `SentinelGuard` FastAPI integration: `guard_for(endpoint_id)` dependency; `await guard.load_scripts()` required before first request; denied reasons map to 429 (with `Retry-After`) or 503 (`_denied_status`, `_HTTP_429_REASONS`, `_HTTP_503_REASONS`)
-- `tests/` — 17 files, 252 tests (see Testing below)
-- `docs/` — `sentinel-project-record.md` (canonical, V1 spec frozen; `vision.md` superseded), `implementation_plan.md` (phase roadmap), `assets/*.svg`
+- `tests/` — 18 files, 264 tests (22 `security`-marked; see Testing below)
+- `docs/` — `sentinel-project-record.md` (canonical, V1 spec frozen; `vision.md` superseded), `implementation_plan.md` (phase roadmap), `phase-11-plan.md` (the executed Phase 11 plan; template for future phase plans), `phase-8-10-summary.md`, `assets/*.svg`
 - `docker-compose.yml` — Redis 7 with `noeviction` + bounded `maxmemory` (required config)
 - `sentinel.example.json` — example config
-- `.github/workflows/ci.yml` — lint job (ruff check / format / mypy) + test job (pytest `-m "not slow"`, real Redis service)
+- `.github/workflows/ci.yml` — lint job (ruff check / format / mypy), test job (pytest `-m "not slow"`, real Redis service), security job (`pytest -m security`, real Redis service)
 
 ## Non-negotiable invariants (do not "fix")
 
@@ -92,7 +92,7 @@ pre-commit run --all-files              # clean
      emergency limiter.
    - Also fixed pre-existing mypy debt in `sentinel/redis.py` (redis-py `evalsha` stub union
      `Awaitable[str] | str`) so `mypy sentinel` is green again.
-2. **Bug fix (done, merged via PR #10, commit d4da3a5):** Sliding window Lua script anchored the
+3. **Bug fix (done, merged via PR #10, commit d4da3a5):** Sliding window Lua script anchored the
    current window to the request arrival time instead of Redis `TIME()` `now`, and did not expire a
    previous window that had fully elapsed when the arrival time preceded it. Fixed by anchoring to
    `now`, removing fully-elapsed previous windows, and writing the full updated window state
@@ -101,21 +101,24 @@ pre-commit run --all-files              # clean
    and friends in `tests/test_algorithms.py`, parity cases in `tests/test_lua_parity.py`).
    Root cause: the anchor was derived from Lua's arrival-time argument instead of `TIME()`; the
    distributed invariant is "Redis TIME() is the one clock."
-2. **Refactor PR #9 (done, merged):** Extracted pure reference algorithms to `sentinel/algorithms.py`
+4. **Refactor PR #9 (done, merged):** Extracted pure reference algorithms to `sentinel/algorithms.py`
    and hardened the sliding-window parity suite (`tests/test_lua_parity.py`, 25 tests) comparing
    Python reference vs real Redis Lua output; restored `sentinel/lua/sliding_window.lua` so it is
    now the single source of truth tested directly (no generated/embedded duplicates).
-3. **Completed phases 0–7** of `docs/implementation_plan.md`:
+5. **Completed phases 0–7** of `docs/implementation_plan.md`:
    - Phase 0 skeleton (smoke test, pyproject) — Phases 1–7: models/config, Redis foundation,
      pure algorithms, Lua scripts + NOSCRIPT recovery, PolicyResolver, RateLimiter strategies,
      FastAPI guard + JWT auth (401/429/Retry-After semantics).
    - Repo started from a design-only state (project record + implementation plan + superseded vision).
-4. **CI/repo hygiene:** verified the GitHub Actions workflow runs the full fast suite against real
+6. **CI/repo hygiene:** verified the GitHub Actions workflow runs the full fast suite against real
    Redis; PR template exists at `.github/PULL_REQUEST_TEMPLATE.md`.
 
 ## Where things stand
 
-- Branch `main`, clean working tree, `HEAD == origin/main` (f5e1d5b). Phases 0–11 merged; stale feature branches (`feat/failure-handling`, `fix/sliding-window-anchor`, all `origin/chore|feat/*`) pruned.
+- Branch `main`, clean working tree, `HEAD == origin/main` (24259e9). Phases 0–11 merged (PRs #9–#12);
+  stale feature branches (local and remote) pruned. The post-merge docs commit `24259e9`
+  ("docs: record phase-11 completion and summary") holds the AGENTS.md/checklist/project-record updates
+  and `docs/phase-11-plan.md`.
 - **Implemented:** phases 0–11 of the plan. `DecisionReason` (8 members) is fully exercised:
   all failure paths produce decisions and the HTTP layer maps them to 429/503. §07 security
   findings are locked in by 22 `security`-marked regression tests (dedicated CI job).
@@ -131,3 +134,11 @@ pre-commit run --all-files              # clean
 - Pre-commit hooks: ruff (check + format) + mypy; run `pre-commit run --all-files` after changes.
 - Run the full test suite after any change; keep 100% coverage on `sentinel/`.
 - Integration tests must use unique keys per run (see `_unique()` pattern) and clean up after themselves; Redis state is shared.
+- **Git workflow:** trunk-based. Work on short-lived branches (`feat/`, `fix/`, `test/`, `chore/`) off
+  `main`; conventional-commit messages (`test(security): ...`); land via squash-merge PRs (merge +
+  delete branch); never commit implementation directly to `main` — the only direct-to-main commits are
+  the sanctioned post-merge docs commits (e.g., AGENTS.md/checklist updates after a phase PR merges).
+- `gh` is not authenticated on this machine; git pushes work via the Windows credential manager.
+  For `gh pr create`/`merge`/`checks`, set `GH_TOKEN` in-process by piping a PowerShell here-string
+  (`"protocol=https<newline>host=github.com<newline>"`) into `git credential fill`, extracting the
+  `password=` line, then clearing the env var.
