@@ -32,6 +32,21 @@ microtokens, and every failure resolves to one of 8 bounded `DecisionReason` val
 - **Security posture locked by tests** — 23 `security`-marked regression tests cover spoofing,
   Lua TTL-only expiry, cardinality bombs, and more.
 
+## Installing
+
+```powershell
+pip install sentinel
+```
+
+Sentinel is a library, not a service: install it into your FastAPI application's environment,
+then wire `SentinelGuard` into your app (quick start below). You still need a dedicated Redis 7
+instance configured with `noeviction` and a bounded `maxmemory` — Sentinel refuses to start
+otherwise. For development, install the library plus its tooling instead:
+
+```powershell
+pip install -e ".[dev]"
+```
+
 ## Quick start
 
 Requirements: Python ≥ 3.11, a Redis 7 instance configured with `noeviction` and a bounded
@@ -191,6 +206,12 @@ python benchmarks/benchmark.py --smoke
 - Trunk-based workflow; short-lived `feat/`/`fix/`/`test/`/`docs/` branches, squash-merge PRs.
 - Strict `mypy --strict`, ruff check + format, pre-commit hooks; no comments in code unless
   asked.
+- Packaging is proven by tests, not assumptions: `tests/test_packaging.py` builds the wheel and
+  sdist, asserts their contents (Lua sources, `py.typed`, no
+  `tests/`/`benchmarks/`/`examples/` leaks) and metadata, runs `twine check`, and
+  smoke-installs the wheel into a fresh venv. The `packaging` CI job repeats the build and
+  fresh-venv install on every PR and push; the `publish` job uploads to PyPI only on `v*`
+  tags.
 - Non-negotiable invariants (Redis `TIME()` is the only algorithm clock, integer microtokens,
   explicit `endpoint_id`, JWT-only identity, no client-reachable numeric input) — see
   `AGENTS.md` and `docs/architecture.md` §7.
