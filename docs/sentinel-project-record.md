@@ -254,7 +254,7 @@ Feasible, and no longer theoretically feasible — every P0 issue found across t
 | Testing & benchmarking | 3–7 days |
 | Integration & documentation | 2–4 days |
 
-> **Status.** Implementation phases 0–14 complete. Phase 11 (PR #12) locked in every §07 finding
+> **Status.** Implementation phases 0–15 complete. Phase 11 (PR #12) locked in every §07 finding
 > with a `security`-marked regression test or an explicit documented boundary; Phase 12 shipped
 > structured deny logging (`tenant_hash`, reason, latency, breaker state) and bounded
 > `endpoint_id`/`decision_reason` Prometheus metrics, plus the live SEC-08 cardinality assertion;
@@ -264,7 +264,11 @@ Feasible, and no longer theoretically feasible — every P0 issue found across t
 > ~2.3× fallback rate under sustained failure). That defect is now fixed (PR #16) — the emergency
 > limiter mirrors the Lua's no-write-on-deny, sustained fallback allowance matches the configured
 > rate, and the post-fix benchmark re-run shows no regression.
-> Next: the Phase 15 documentation phase.
+> Phase 15 (documentation) shipped the library entry point (`README.md`), the architecture
+> walkthrough (`docs/architecture.md`), the failure-handling deep dive (`docs/failure-handling.md`),
+> and the authoritative known-limitations list (`docs/known-limitations.md`); zero production-code
+> changes.
+> Next: Phase 16 — packaging & distribution.
 
 > **Next.** Not another document. Build V1 against this spec, then kill Redis mid-traffic and run concurrent requests across 3 instances — the real adversarial test is load, not a fourth review.
 
