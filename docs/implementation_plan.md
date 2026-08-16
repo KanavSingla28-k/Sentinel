@@ -256,17 +256,17 @@ Must be read and understood before executing their respective phases:
 ---
 
 ## Part 7 — Final V1 Execution Checklist
-- [ ] Phase 0: Project init & CI
-- [ ] Phase 1: Domain models
-- [ ] Phase 2: Redis foundation
-- [ ] Phase 3: Python reference models
-- [ ] Phase 4: Lua atomic execution
-- [ ] Phase 5: PolicyResolver
-- [ ] Phase 6: RateLimiter orchestration
-- [ ] Phase 7: FastAPI integration
-- [ ] Phase 8: Failure handling & classification
-- [ ] Phase 9: Circuit breaker
-- [ ] Phase 10: Emergency local limiter
+- [x] Phase 0: Project init & CI
+- [x] Phase 1: Domain models
+- [x] Phase 2: Redis foundation
+- [x] Phase 3: Python reference models
+- [x] Phase 4: Lua atomic execution
+- [x] Phase 5: PolicyResolver
+- [x] Phase 6: RateLimiter orchestration
+- [x] Phase 7: FastAPI integration
+- [x] Phase 8: Failure handling & classification
+- [x] Phase 9: Circuit breaker
+- [x] Phase 10: Emergency local limiter
 - [x] Phase 11: Security hardening pass
 - [x] Phase 12: Observability & metrics
 - [x] Phase 13: Full concurrency/failure test suite
