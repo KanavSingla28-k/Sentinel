@@ -118,3 +118,29 @@ investigation that confirmed a Phase 8/10 production defect in the **fail-open**
   self-consistent parity test, add a sustained-denial regression test — ships in a separate PR
   after this phase merges. Until then, fail-open deployments should treat
   `fallback_rate_per_process_micro` as approximate under sustained outages.
+
+### Fix status (shipped post-Phase-14)
+
+The defect was fixed by mirroring the Lua's "denied requests never write" contract in
+`TokenBucketEmergencyLimiter` (`sentinel/emergency.py` now persists bucket state only on ALLOW;
+a denied call leaves the state untouched, so the next evaluation recomputes the refill over the
+full elapsed window since the last write and no elapsed time is ever refilled twice). Regression
+coverage: deterministic injected-clock sustained-traffic tests (initial burst, 1/2/5 tokens/s at
+100 ms cadence, denied-calls-no-acceleration) plus a full-journey fail-open test through
+`RateLimiter`, and the self-consistent parity test now applies no-write-on-deny to the reference
+state.
+
+Post-fix verification (same topology, `benchmarks/benchmark.py`):
+
+- **Sustained fallback allowance now matches the configured rate.** Dead-port fail-open
+  (`RateLimiter` + breaker + emergency, real 31 ms connect timeout) at 1 token/s, 100 ms cadence
+  over 5 s: exactly 6 allows (initial burst + 5 refills at ≈1.1 s spacing) — pre-fix this was
+  ~12–13 (~2.3×). Deterministic unit equivalent: 1 token/s over 3 s allows at t = 0.0/1.0/2.0/3.0
+  (pre-fix: 0.0/0.4/0.8/…, 8 allows).
+- **No throughput/latency regression.** All 18 cells within noise of the baseline (e.g. B2 c=1
+  p50 826 µs vs 827 µs; B7 c=1 96.4k ops/s vs 96.2k; B8/B9 failure-path p99 ≈ 26 ms unchanged).
+- **Failure-cell counts now reflect the corrected semantics.** B8 (dead-port fail-open) allows
+  exactly the initial burst per rep (3 `redis_timeout` allows / 1500 ops across 3 reps vs the
+  baseline's 5+3 phantom allows from banked denied-call refills); B7 (breaker-OPEN short-circuit)
+  allows 0 (the warm-up consumed the burst; ~0 elapsed at batch cadence). B9 (fail-closed) counts
+  are unchanged (1485/1464 `circuit_open`, 15/36 `fail_closed`).

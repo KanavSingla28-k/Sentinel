@@ -14,12 +14,17 @@ NOEVICTION_POLICY = "noeviction"
 
 
 class SentinelRedis:
-    def __init__(self, redis_url: str) -> None:
+    def __init__(
+        self,
+        redis_url: str,
+        socket_timeout: float | None = SOCKET_TIMEOUT_SECONDS,
+        socket_connect_timeout: float | None = SOCKET_CONNECT_TIMEOUT_SECONDS,
+    ) -> None:
         self._pool = ConnectionPool.from_url(
             redis_url,
             max_connections=MAX_CONNECTIONS,
-            socket_timeout=SOCKET_TIMEOUT_SECONDS,
-            socket_connect_timeout=SOCKET_CONNECT_TIMEOUT_SECONDS,
+            socket_timeout=socket_timeout,
+            socket_connect_timeout=socket_connect_timeout,
             decode_responses=True,
         )
         self._client = Redis(connection_pool=self._pool)

@@ -58,7 +58,17 @@ class TokenBucketEmergencyLimiter:
             last_refill_micro=last_refill_micro,
             now_micro=now,
         )
-        self._buckets[endpoint_id] = (tokens_after, last_refill_after)
+        # Mirror the Lua's "denied requests never write" contract
+        # (sentinel/lua/token_bucket.lua:8): token_bucket_evaluate advances
+        # last_refill_micro only on ALLOW, so persisting tokens_after on a
+        # denied call would bank the partial refill of this evaluation and the
+        # next one would refill the same elapsed window again (the Phase 14
+        # double-refill bug, ~2.3x the configured rate under sustained
+        # failure). Write only on ALLOW; a denied call leaves the state
+        # untouched and the next evaluation recomputes the refill over the
+        # full elapsed window since the last write — no refill is ever lost.
+        if allowed:
+            self._buckets[endpoint_id] = (tokens_after, last_refill_after)
         retry_after_seconds: float | None = None
         if not allowed:
             retry_after_seconds = (

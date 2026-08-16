@@ -199,6 +199,11 @@ history + "Where things stand" (phases 0–14 complete; benchmark harness + base
   cadence). This is a Phase 8/10 defect the benchmark exists to surface; per the phase contract it
   is **disclosed in `docs/benchmark-results.md`** and the fix ships as a separate PR after Phase 14
   merges.
+- **Follow-up fix shipped post-Phase-14** (PR #16): the emergency limiter now persists bucket state
+  only on ALLOW (mirrors the Lua contract), with sustained-traffic regression tests at 1/2/5
+  tokens/s, a full-journey fail-open regression, and a corrected parity test. Post-fix benchmark
+  re-run confirms the sustained allowance matches the configured rate and all 18 cells stay within
+  noise of the baseline; see `docs/benchmark-results.md` → "Fix status".
 - Everything else matches the plan: custom stdlib harness, nine-cell matrix, no-refill fresh-key
   policies, median-of-reps quantiles, CPU deltas, environment block, smoke test on the `slow` job,
   zero production-code changes.

@@ -48,6 +48,7 @@ WARMUP_OPS = 100
 REPS = 3
 CONCURRENCIES = (1, 8)
 DEAD_REDIS_URL = "redis://localhost:6399/0"
+BENCHMARK_SOCKET_TIMEOUT_SECONDS = 5.0
 OP_COUNTS = {"http": 2_000, "limiter": 5_000, "redis": 10_000, "failure": 500}
 SMOKE_OP_COUNTS = {"http": 50, "limiter": 50, "redis": 50, "failure": 20}
 
@@ -580,7 +581,11 @@ def _aggregate(reps: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 async def _run_all(args: argparse.Namespace) -> dict[str, Any]:
-    live = SentinelRedis(args.redis_url)
+    live = SentinelRedis(
+        args.redis_url,
+        socket_timeout=BENCHMARK_SOCKET_TIMEOUT_SECONDS,
+        socket_connect_timeout=BENCHMARK_SOCKET_TIMEOUT_SECONDS,
+    )
     try:
         await live.assert_noeviction()
         server_info = await live.client.info("server")
