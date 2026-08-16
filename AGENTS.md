@@ -19,19 +19,20 @@ two services with deliberately different policy semantics:
 - `sentinel/models.py` — `Policy`, `Decision`, `DecisionReason` (8 members), `FailMode`, `AlgorithmType`, Lua exactness constants
 - `sentinel/config.py` — `SentinelConfig`, `AppConfig`, `load_config(path)` (strict pydantic; extra keys forbidden)
 - `sentinel/resolver.py` — `StaticPolicyResolver.resolve(tenant_id, endpoint_id) -> Policy | None` (endpoint-only, tenant-agnostic)
-- `sentinel/redis.py` — `SentinelRedis` (hardcoded 20ms socket timeouts, fixed pool, `assert_noeviction()` startup check), `ScriptLoader` (load / execute with NOSCRIPT → re-EVAL once → raise `ScriptMissingError`)
+- `sentinel/redis.py` — `SentinelRedis` (production fail-fast budget: 20ms socket + connect timeouts by default, `assert_noeviction()` startup check; optional `socket_timeout`/`socket_connect_timeout` constructor args — defaults unchanged, only the benchmark harness overrides them), `ScriptLoader` (load / execute with NOSCRIPT → re-EVAL once → raise `ScriptMissingError`)
 - `sentinel/lua.py` — `TOKEN_BUCKET_SCRIPT`, `SLIDING_WINDOW_SCRIPT`, `SCRIPT_NAMES`, `script_source(name)`; sources in `sentinel/lua/*.lua`
 - `sentinel/limiter.py` — `RateLimiter.evaluate(policy, key)`, `TokenBucketStrategy`, `SlidingWindowStrategy`, `build_bucket_key(tenant_id, endpoint_id, policy_version)`, `hash_tenant(tenant_id)`; Phase 8–10 wiring: breaker check → strategy → RedisError classification (fail-closed → `FAIL_CLOSED`, fail-open → emergency limiter). `RateLimiter` requires explicit `breaker` and `emergency` dependencies.
 - `sentinel/errors.py` — `classify_redis_error(exc) -> DecisionReason` (timeout → `REDIS_TIMEOUT`, connection → `REDIS_CONNECTION_ERROR`, `ScriptMissingError` → `REDIS_NOSCRIPT_RETRY`); `ScriptMissingError` (NOSCRIPT re-load exhaustion; raised by `ScriptLoader`). Programming errors (KeyError, etc.) are never caught.
 - `sentinel/circuit_breaker.py` — per-process CLOSED/OPEN/HALF-OPEN breaker (`CircuitBreaker`, `FAILURE_THRESHOLD`, `OPEN_TIMEOUT_SECONDS`); OPEN short-circuits before Redis; only genuine Redis successes reset `failure_count`. Injected `now` clock for tests.
-- `sentinel/emergency.py` — `TokenBucketEmergencyLimiter` (per-process, endpoint-keyed token bucket; capacity = refill rate = `fallback_rate_per_process_micro`); deliberately uses the local monotonic clock — documented exception to the Redis-clock invariant, since it runs precisely when Redis is unreachable. `EmergencyOutcome(allowed, remaining_micro, retry_after_seconds)`, `EmergencyLimiter` protocol.
+- `sentinel/emergency.py` — `TokenBucketEmergencyLimiter` (per-process, endpoint-keyed token bucket; capacity = refill rate = `fallback_rate_per_process_micro`); deliberately uses the local monotonic clock — documented exception to the Redis-clock invariant, since it runs precisely when Redis is unreachable. Persists bucket state only on ALLOW (mirrors the Lua's "denied requests never write" contract — the Phase 14 double-refill fix). `EmergencyOutcome(allowed, remaining_micro, retry_after_seconds)`, `EmergencyLimiter` protocol.
 - `sentinel/algorithms.py` — pure Python reference functions (`token_bucket_evaluate`, `sliding_window_evaluate`) used to validate the Lua scripts
 - `sentinel/auth.py` — `verify_bearer_token(token, secret, algorithms) -> sub`, `AuthenticationError`, `AuthReason`
 - `sentinel/observability.py` — `SentinelObservability` (injected into `SentinelGuard`, like `breaker`/`emergency`): `record_decision(tenant_hash, endpoint_id, decision, latency_micro, breaker_state)` emits a WARNING deny log (structured `extra` fields; never raw tenant) and increments `sentinel_decisions_total` + `sentinel_evaluate_latency_microseconds`, both labeled ONLY by `endpoint_id`/`decision_reason`. Process-wide collectors registered once on the default registry; injectable `logger`/`registry` for tests.
 - `sentinel/http.py` — `SentinelGuard` FastAPI integration: `guard_for(endpoint_id)` dependency; `await guard.load_scripts()` required before first request; denied reasons map to 429 (with `Retry-After`) or 503 (`_denied_status`, `_HTTP_429_REASONS`, `_HTTP_503_REASONS`); Phase 12 emits decision telemetry (latency measured around `limiter.evaluate`).
-- `benchmarks/benchmark.py` — Phase 14 dependency-free benchmark harness (B1–B9 cells × concurrency {1,8}: unguarded / with-Sentinel / detached / short-circuit / dead-port fail-open + fail-closed; p50/p95/p99, API+Redis CPU, decision-reason error rates, environment block; `--smoke`/`--out`/`--reps`); baseline in `docs/benchmark-results.md`
-- `tests/` — 22 files, 287 tests (23 `security`-marked, 10 `slow`-marked incl. `test_benchmark_smoke.py`; see Testing below)
-- `docs/` — `sentinel-project-record.md` (canonical, V1 spec frozen; `vision.md` superseded), `implementation_plan.md` (phase roadmap), `phase-14-plan.md` + `benchmark-results.md` (executed Phase 14 plan + baseline), `phase-13-plan.md` (executed Phase 13 plan; template for future phase plans), `phase-12-plan.md`, `phase-11-plan.md`, `phase-8-10-summary.md`, `assets/*.svg`
+- `benchmarks/benchmark.py` — Phase 14 dependency-free benchmark harness (B1–B9 cells × concurrency {1,8}: unguarded / with-Sentinel / detached / short-circuit / dead-port fail-open + fail-closed; p50/p95/p99, API+Redis CPU, decision-reason error rates, environment block; `--smoke`/`--out`/`--reps`); baseline in `docs/benchmark-results.md`. The live client uses a benchmark-specific 5s socket budget (`BENCHMARK_SOCKET_TIMEOUT_SECONDS`); B7–B9 dead-port clients keep the production 20ms fail-fast budget so the failure-path measurements are unchanged.
+- `tests/` — 22 files, 294 tests (23 `security`-marked, 10 `slow`-marked incl. `test_benchmark_smoke.py`; see Testing below)
+- `README.md` — library entry point (install, quickstart, config tables, doc links)
+- `docs/` — `sentinel-project-record.md` (canonical, V1 spec frozen; `vision.md` superseded), `implementation_plan.md` (phase roadmap), `phase-15-plan.md` (executed Phase 15 plan) + `architecture.md` + `failure-handling.md` + `known-limitations.md` (Phase 15 deliverables), `phase-14-plan.md` + `benchmark-results.md` (executed Phase 14 plan + baseline), `phase-13-plan.md` (executed Phase 13 plan; template for future phase plans), `phase-12-plan.md`, `phase-11-plan.md`, `phase-8-10-summary.md`, `assets/*.svg`
 - `docker-compose.yml` — Redis 7 with `noeviction` + bounded `maxmemory` (required config)
 - `sentinel.example.json` — example config
 - `.github/workflows/ci.yml` — lint job (ruff check / format / mypy), test job (pytest `-m "not slow"`, real Redis service), security job (`pytest -m security`, real Redis service), slow job (`pytest -m slow`, real Redis service)
@@ -50,8 +51,9 @@ two services with deliberately different policy semantics:
 ## Verified quality gates (all green at last run)
 
 ```
-pytest                                  # 287 passed (incl. integration tests against real Redis)
+pytest                                  # 294 passed (incl. integration tests against real Redis)
 pytest --cov=sentinel --cov-report=term-missing   # 100% coverage
+python benchmarks/benchmark.py --smoke  # pass (subprocess-driven in the slow suite)
 mypy sentinel                           # strict, clean
 ruff check .                            # clean
 ruff format --check .                   # clean
@@ -65,7 +67,53 @@ pre-commit run --all-files              # clean
 
 ## Work history (most recent first)
 
-1. **Fixed the Phase 14 emergency-limiter double-refill defect (branch `fix/emergency-limiter-double-refill`):**
+1. **Completed Phase 15 documentation (branch `docs/phase-15`, docs-only, 4 commits; merge
+   pending — no PR opened):**
+   - Deliverables: `README.md` rewritten as the library entry point (install, quickstart copied
+     from the real wiring pattern in `tests/test_http_integration.py`, config tables, doc
+     links); `docs/architecture.md` (module map, request journey with `file:line` references,
+     state & key design, clock discipline — Redis `TIME()` vs wall-clock observability
+     timestamps vs the monotonic breaker/emergency clocks — invariants, evidence map);
+     `docs/failure-handling.md` (decision table, `classify_redis_error` mapping, breaker state
+     machine, emergency limiter + no-write-on-deny, HTTP 429/503 + Retry-After semantics,
+     measured failure-path latency B7–B9, ADR-011); `docs/known-limitations.md` — the crucial
+     deliverable: ~19-item limitation table with consequence + source (ADR-011, per-process
+     breaker, JWKS deferred to V2, 20ms socket budget, HS*-only JWT, sliding-window
+     estimate/no Retry-After, per-process fail-open scaling, etc.).
+   - Zero production-code changes (`git diff sentinel/ tests/ benchmarks/ pyproject.toml`
+     empty — docs-only phase). Status-only updates to frozen docs: Phase 15 ticked in the
+     implementation-plan checklist; project record §11 status line now reads phases 0–15
+     complete, next = Phase 16.
+   - Deviation from convention: the AGENTS.md refresh is the final commit on `docs/phase-15`
+     (conventionally it lands in a sanctioned post-merge `main` commit; the branch is not
+     pushed/merged by this session), and the pre-existing uncommitted post-`1328652` AGENTS.md
+     update was folded into that commit. Quality gate for a docs-only phase: pre-commit over
+     the markdown + empty code diff (no test-suite run needed).
+2. **Decoupled the benchmark socket budget from the production 20ms fail-fast (commit 1328652, fast-forward merged to `main`):**
+   - Symptom: `tests/test_benchmark_smoke.py::test_bench_smoke_runs_and_reports_sane_statistics`
+     failed intermittently with `redis.exceptions.TimeoutError: Timeout reading from
+     localhost:6379` on this Windows machine (Docker Desktop). Root cause: `SentinelRedis`
+     hardcoded the 20ms production fail-fast budget, the benchmark harness inherited it, and
+     under CPU saturation (14 burners on 16 cores) the loopback Redis tail exceeded 20ms —
+     reproduced standalone: 8/15 `--smoke` failures pre-fix under load.
+   - Fix: `SentinelRedis.__init__` gained optional `socket_timeout`/`socket_connect_timeout`
+     constructor args (defaults = `SOCKET_TIMEOUT_SECONDS`/`SOCKET_CONNECT_TIMEOUT_SECONDS` =
+     `0.02` — production behavior unchanged, verified by runtime pool-kwargs checks); the
+     benchmark live client (B1–B6) uses a benchmark-only 5s budget
+     (`BENCHMARK_SOCKET_TIMEOUT_SECONDS`), while `_dead_limiter()` (B7–B9) keeps the 20ms
+     fail-fast budget so the failure-path measurements stay the same. Only the benchmark
+     harness overrides the timeouts.
+   - Verification: 294 passed, 100% coverage, ruff/mypy/pre-commit clean; post-fix perf
+     within run-to-run noise of the baseline (B2 c=1 p50 811→830 µs; B8/B9 p99 ≈ 22–29 ms);
+     CPU-saturation stress 0/22 failures (12 pytest-wrapped + 10 standalone `--smoke` runs;
+     pre-fix: 1–2/12 and 8/15 respectively); under load B8/B9 p50 ≈ 22–27 ms / p99 ≈ 29–37 ms
+     — same band as pre-fix, nowhere near the 5s budget, proving no leak into the failure path.
+   - Tests: `tests/test_redis.py` — signature tripwire updated to
+     `["self", "redis_url", "socket_timeout", "socket_connect_timeout"]`, new
+     `test_custom_socket_timeouts_are_forwarded_to_the_pool` (pool kwargs reflect the custom
+     values; defaults still enforce the 20ms budget). Changed files only:
+     `sentinel/redis.py`, `benchmarks/benchmark.py`, `tests/test_redis.py`.
+2. **Fixed the Phase 14 emergency-limiter double-refill defect (branch `fix/emergency-limiter-double-refill`, commit 606e1f0, merged to `main`):**
    - Root cause: `TokenBucketEmergencyLimiter.evaluate` persisted `(tokens_after, last_refill_after)`
      on every call, but `token_bucket_evaluate` advances `last_refill_micro` only on ALLOW (the
      Lua's "denied requests never write" contract, `token_bucket.lua:8`). Each denied call banked
@@ -218,11 +266,14 @@ pre-commit run --all-files              # clean
 
 ## Where things stand
 
-- Branch `main`, clean working tree, `HEAD == origin/main` (351c5dc). Phases 0–14 merged
-  (PRs #9–#15); stale feature branches (local and remote) pruned. The post-merge docs commit
-  `351c5dc` ("bench(perf): phase-14 benchmark harness and baseline (#15)") holds the Phase 14
-  work; this AGENTS.md update is the sanctioned follow-up docs commit.
-- **Implemented:** phases 0–14 of the plan. `DecisionReason` (8 members) is fully exercised:
+- Branch `docs/phase-15`, clean working tree, based on `main` at HEAD `1328652`. Phases 0–14
+  merged (PRs #9–#15), plus two post-phase-14 fixes fast-forwarded onto `main` without PRs:
+  `606e1f0` (emergency-limiter no-write-on-deny) and `1328652` (benchmark socket-budget
+  separation). Local `main` is ahead of `origin/main` (`5b5475a`) by those two commits — not yet
+  pushed; stale branches remain (`chore/init-repo`, `feat/domain-models`,
+  `feat/failure-handling` local; the two fix branches were deleted after merging). Phase 15
+  documentation sits on `docs/phase-15` (4 commits, merge-ready; no PR opened yet).
+- **Implemented:** phases 0–15 of the plan. `DecisionReason` (8 members) is fully exercised:
   all failure paths produce decisions and the HTTP layer maps them to 429/503. §07 security
   findings are locked in by 23 `security`-marked regression tests (dedicated CI job), including
   the Phase 12 live metrics cardinality assertion. The §09 invariants are proven under
@@ -232,11 +283,18 @@ pre-commit run --all-files              # clean
   `benchmarks/benchmark.py`); the benchmark surfaced one fail-open defect (emergency limiter
   double-refill, ~2.3× fallback rate under sustained failure) disclosed in
   `docs/benchmark-results.md` + project record §09 — **fixed** (no-write-on-deny in
-  `sentinel/emergency.py`, sustained-rate regression tests, post-fix benchmark re-run with no
-  regression; see work-history entry 1).
+`sentinel/emergency.py`, sustained-rate regression tests, post-fix benchmark re-run with no
+   regression; see work-history entry 3). A second post-benchmark defect was also fixed: the
+   benchmark harness inherited the production 20ms fail-fast socket budget, so the smoke test
+   timed out under CPU saturation — **fixed** by optional `socket_timeout`/`socket_connect_timeout`
+   on `SentinelRedis` (production defaults unchanged) with the benchmark live client on a 5s
+   budget and B7–B9 still on 20ms (see work-history entry 2). Phase 15 (documentation) shipped
+   the README entry point plus the architecture / failure-handling / known-limitations deep
+   dives (`docs/architecture.md`, `docs/failure-handling.md`, `docs/known-limitations.md`) with
+   zero code changes (see work-history entry 1).
 - **Not yet implemented (next work):**
-  - Phases 15–18 docs/packaging/integration/release. Phase 15 (documentation: README, Known
-    Limitations) is the next phase.
+  - Phases 16–18 packaging/integration/release. Phase 16 (packaging & distribution) is the
+    next phase.
 
 ## Conventions
 
