@@ -82,12 +82,15 @@ loader = ScriptLoader(redis.client)
 
 guard = SentinelGuard(config, redis, loader)
 
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    await guard.load_scripts()   # required before the first request
+    await guard.load_scripts()  # required before the first request
     yield
 
+
 app = FastAPI(lifespan=lifespan)
+
 
 @app.post("/tailor")
 async def tailor(
