@@ -9,6 +9,23 @@ description = "Application-aware, tenant-aware, distributed rate limiting librar
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
+keywords = [
+    "rate-limiting",
+    "fastapi",
+    "redis",
+    "lua",
+    "token-bucket",
+    "sliding-window",
+]
+classifiers = [
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
     "redis>=5.0",
     "fastapi>=0.115",
@@ -16,6 +33,11 @@ dependencies = [
     "PyJWT>=2.8,<3",
     "prometheus-client>=0.20",
 ]
+
+[project.urls]
+Homepage = "https://github.com/KanavSingla28-k/Sentinel"
+Source = "https://github.com/KanavSingla28-k/Sentinel"
+Documentation = "https://github.com/KanavSingla28-k/Sentinel/tree/main/docs"
 
 [project.optional-dependencies]
 dev = [
@@ -27,6 +49,8 @@ dev = [
     "ruff==0.16.2",
     "mypy>=1.11",
     "pre-commit>=3.7",
+    "build>=1.2",
+    "twine>=5",
 ]
 
 [tool.setuptools.packages.find]
