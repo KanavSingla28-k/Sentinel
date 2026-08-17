@@ -113,7 +113,7 @@ Phases 0–15 merged on `main`. No production-code changes required.
    A `v*` tag before the secret exists must fail loudly, not silently skip.
 
 7. **README update (docs-only):** new short "Installing" paragraph —
-   `pip install sentinel` (+ the existing `docker compose`/Redis-`noeviction` requirement),
+   `pip install sentinel-rate-limiter` (+ the existing `docker compose`/Redis-`noeviction` requirement),
    plus a line in the Development section pointing at the packaging job and the new test.
 
 ### Testing & quality gates (Phase 16)
@@ -315,7 +315,7 @@ jobs green on `main`.
    - Create the **GitHub Release** from the tag with notes assembled from the PR list
      (#9–#16 + this epic's PRs) and the triage outcome; no CHANGELOG.md file is added —
      GitHub Releases is the changelog (decision to record).
-5. **Final smoke:** fresh venv, `pip install sentinel` (from PyPI, not the local wheel), import
+5. **Final smoke:** fresh venv, `pip install sentinel-rate-limiter` (from PyPI, not the local wheel), import
    + Lua-resource check + one real-Redis integration decision via the quickstart wiring.
 6. **Post-release dev bump:** on `main` after the tag, bump to `1.1.0.dev0` (both version
    locations) so local/editable installs are distinguishable from the published `1.0.0`
@@ -423,7 +423,7 @@ jobs green on `main`.
 - [ ] Project record §11, implementation plan Part 7 ticks, README/status docs
 - [ ] Annotated tag `v1.0.0` pushed from green `main`; PyPI upload verified
 - [ ] GitHub Release with notes (PR list + triage outcome)
-- [ ] Fresh-venv `pip install sentinel` from PyPI smoke test
+- [ ] Fresh-venv `pip install sentinel-rate-limiter` from PyPI smoke test
 - [ ] Post-release `1.1.0.dev0` bump + AGENTS.md refresh on `main`
 - [ ] Hygiene: no stale branches, `origin/main` == local, clean tree
 

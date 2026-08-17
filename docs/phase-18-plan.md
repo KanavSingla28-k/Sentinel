@@ -75,7 +75,7 @@ Walk the deliverables below as an explicit read-through; record findings in the 
 1. On the green merged `main` commit: `git tag -a v1.0.0 -m "Sentinel V1 — application-aware distributed rate limiting for FastAPI"` and **push the tag separately** (`git push origin v1.0.0`) so a bad tag can be deleted without touching `main`. Annotated tag only; never moved or force-pushed (plan Part 5).
 2. **Publish job** triggers on the tag push: lint → test → security → slow → packaging must all pass before `twine upload dist/*`. Watch the run; a `PYPI_TOKEN` failure shows as the hard error step.
 3. **Verify the published artifact** (not just CI's upload step):
-   - Fresh venv: `pip install sentinel==1.0.0` (real index), then import + a quickstart-style smoke (guarded evaluation with a dummy policy) to prove the published wheel is consumable.
+   - Fresh venv: `pip install sentinel-rate-limiter==1.0.0` (real index), then import + a quickstart-style smoke (guarded evaluation with a dummy policy) to prove the published wheel is consumable.
    - `pip index versions sentinel` (or PyPI page) shows `1.0.0`.
 4. **GitHub Release** — create from the `v1.0.0` tag: title "v1.0.0 — Sentinel V1", body = merged PR list (PRs #9–#18), pointers to `docs/architecture.md`, `docs/failure-handling.md`, `docs/known-limitations.md`, `docs/benchmark-results.md`, and the PDFTalk integration report. No `CHANGELOG.md` file (documented decision — GitHub Releases is the changelog).
 

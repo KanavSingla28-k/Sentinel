@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sentinel"
+name = "sentinel-rate-limiter"
 version = "1.0.0"
 description = "Application-aware, tenant-aware, distributed rate limiting library"
 readme = "README.md"

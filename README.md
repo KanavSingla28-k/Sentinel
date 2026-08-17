@@ -35,7 +35,7 @@ microtokens, and every failure resolves to one of 8 bounded `DecisionReason` val
 ## Installing
 
 ```powershell
-pip install sentinel
+pip install sentinel-rate-limiter
 ```
 
 Sentinel is a library, not a service: install it into your FastAPI application's environment,
