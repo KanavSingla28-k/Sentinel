@@ -67,6 +67,32 @@ pre-commit run --all-files              # clean
 
 ## Work history (most recent first)
 
+1. **Released V1 (Phase 18, branch `chore/release-v1.0.0`):** production-readiness review +
+   `v1.0.0` release. Pre-flight gates re-run green on real Redis (302 passed — note: PDFTalk's
+   auth-protected `pdftalk-redis` container occupies host 6379, so local integration runs need
+   `SENTINEL_REDIS_URL=redis://localhost:6380/0` against a dedicated `sentinel-test-redis`
+   container; 100% coverage, mypy/ruff/pre-commit clean, benchmark smoke pass, CI green on main
+   @ `32f74c6`). P0 triage: known-limitations walk with no blocking findings; PDFTalk integration
+   (see below) dispositioned as app-side issues only. Bumped version `0.1.0 → 1.0.0` (both
+   locations, tripwire green), ticked checklist + project record §11, tagged `v1.0.0`, published
+   to PyPI via the `v*`-tag publish job (`PYPI_TOKEN` secret required), fresh-venv install smoke
+   verified, GitHub Release created, post-release dev bump `1.1.0.dev0`. Phase 18 plan:
+   `docs/phase-18-plan.md` (includes the Phase 17 disposition record).
+2. **Phase 17 satisfied by real-app integration (PDFTalk, supersedes in-repo `examples/`):**
+   integration testing in the real PDFTalk FastAPI app against the vendored
+   `sentinel-0.1.0-py3-none-any.whl` wheel (built from the Phase 16 packaging branch). All 8
+   scenarios passed (PASS WITH LIMITATIONS): normal 429s + Retry-After, sliding-window state
+   shape, fail-closed 503, recovery, multi-process shared bucket, multi-tenant isolation, auth
+   401s, Lua script reload after Redis restart, observability metrics. **No genuine Sentinel
+   defects**; two pre-existing PDFTalk-side issues recorded there (500 on non-UUID `sub`,
+   structlog dropping `extra` fields). Evidence in the PDFTalk repo:
+   `docs/sentinel/integration-test-report.md`, `test-results.json`, `evidence/`. Decision: no
+   `examples/` directory in this repo.
+2. **Completed Phase 16 packaging & distribution (branch `chore/packaging`, merged via PR #17,
+   commit 32f74c6):** setuptools metadata (static version, LICENSE file, classifiers),
+   `tests/test_packaging.py` (fresh-venv wheel install smoke, pyproject-vs-`__version__` tripwire,
+   wheel contents), `packaging` CI job, `publish` CI job (on `v*` tags, `needs` all five jobs,
+   hard-fails without the `PYPI_TOKEN` secret). 302 tests, 100% coverage.
 1. **Completed Phase 15 documentation (branch `docs/phase-15`, docs-only, 4 commits; merge
    pending — no PR opened):**
    - Deliverables: `README.md` rewritten as the library entry point (install, quickstart copied
@@ -266,14 +292,12 @@ pre-commit run --all-files              # clean
 
 ## Where things stand
 
-- Branch `docs/phase-15`, clean working tree, based on `main` at HEAD `1328652`. Phases 0–14
-  merged (PRs #9–#15), plus two post-phase-14 fixes fast-forwarded onto `main` without PRs:
-  `606e1f0` (emergency-limiter no-write-on-deny) and `1328652` (benchmark socket-budget
-  separation). Local `main` is ahead of `origin/main` (`5b5475a`) by those two commits — not yet
-  pushed; stale branches remain (`chore/init-repo`, `feat/domain-models`,
-  `feat/failure-handling` local; the two fix branches were deleted after merging). Phase 15
-  documentation sits on `docs/phase-15` (4 commits, merge-ready; no PR opened yet).
-- **Implemented:** phases 0–15 of the plan. `DecisionReason` (8 members) is fully exercised:
+- Branch `chore/release-v1.0.0`, clean working tree, based on `main` at HEAD `32f74c6`
+  ("Phase 16: Packaging & distribution (#17)"). Phases 0–18 complete; `v1.0.0` tagged and
+  published to PyPI. Local `main == origin/main`; the release PR (#18) is the last squash-merge.
+  Stale local branches: `feat/examples` (points at `32f74c6`), `docs/phase-15`, `chore/init-repo`,
+  `feat/domain-models`, `feat/failure-handling` — hygiene target for the post-release sweep.
+- **Implemented:** all phases 0–18 of the plan. `DecisionReason` (8 members) is fully exercised:
   all failure paths produce decisions and the HTTP layer maps them to 429/503. §07 security
   findings are locked in by 23 `security`-marked regression tests (dedicated CI job), including
   the Phase 12 live metrics cardinality assertion. The §09 invariants are proven under
@@ -284,17 +308,21 @@ pre-commit run --all-files              # clean
   double-refill, ~2.3× fallback rate under sustained failure) disclosed in
   `docs/benchmark-results.md` + project record §09 — **fixed** (no-write-on-deny in
 `sentinel/emergency.py`, sustained-rate regression tests, post-fix benchmark re-run with no
-   regression; see work-history entry 3). A second post-benchmark defect was also fixed: the
+   regression; see work-history entry 4). A second post-benchmark defect was also fixed: the
    benchmark harness inherited the production 20ms fail-fast socket budget, so the smoke test
    timed out under CPU saturation — **fixed** by optional `socket_timeout`/`socket_connect_timeout`
    on `SentinelRedis` (production defaults unchanged) with the benchmark live client on a 5s
-   budget and B7–B9 still on 20ms (see work-history entry 2). Phase 15 (documentation) shipped
+   budget and B7–B9 still on 20ms (see work-history entry 3). Phase 15 (documentation) shipped
    the README entry point plus the architecture / failure-handling / known-limitations deep
    dives (`docs/architecture.md`, `docs/failure-handling.md`, `docs/known-limitations.md`) with
-   zero code changes (see work-history entry 1).
+   zero code changes (see work-history entry 2). Phase 16 shipped packaging + publish CI
+   (work-history entry 2); Phase 17 was satisfied by real-app integration in PDFTalk rather than
+   in-repo examples (work-history entry 2); Phase 18 shipped the v1.0.0 release (work-history
+   entry 1, plan + disposition in `docs/phase-18-plan.md`).
 - **Not yet implemented (next work):**
-  - Phases 16–18 packaging/integration/release. Phase 16 (packaging & distribution) is the
-    next phase.
+  - Post-V1: the deferred V2 boundaries from `docs/known-limitations.md` (JWKS rotation,
+    Redis Cluster, per-process fail-open scaling) — no phase plan exists yet; the project is
+    in maintenance mode until the next roadmap decision.
 
 ## Conventions
 

@@ -272,6 +272,6 @@ Must be read and understood before executing their respective phases:
 - [x] Phase 13: Full concurrency/failure test suite
 - [x] Phase 14: Benchmarking
 - [x] Phase 15: Documentation
-- [ ] Phase 16: Packaging & distribution
-- [ ] Phase 17: Example app integrations
-- [ ] Phase 18: Production readiness review & v1.0.0 Tag
+- [x] Phase 16: Packaging & distribution
+- [x] Phase 17: Example app integrations (satisfied by real-app integration testing in PDFTalk — see `docs/phase-18-plan.md` §1; in-repo `examples/` not created by decision)
+- [x] Phase 18: Production readiness review & v1.0.0 Tag
