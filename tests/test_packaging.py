@@ -70,10 +70,11 @@ def sdist_path(dist_dir: Path) -> Path:
 
 
 def test_version_matches_distribution_metadata() -> None:
+    pyproject = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
+    distribution_name = pyproject["project"]["name"]
     try:
-        metadata_version = importlib.metadata.version("sentinel")
+        metadata_version = importlib.metadata.version(distribution_name)
     except importlib.metadata.PackageNotFoundError:
-        pyproject = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
         metadata_version = pyproject["project"]["version"]
     assert sentinel.__version__ == metadata_version
 
@@ -93,7 +94,9 @@ def test_wheel_contains_sentinel_modules_and_resources(wheel_path: Path) -> None
 def test_wheel_top_level_entries_are_only_sentinel_and_dist_info(
     wheel_path: Path,
 ) -> None:
-    dist_info = f"sentinel-{sentinel.__version__}.dist-info"
+    pyproject = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
+    distribution_name = pyproject["project"]["name"].replace("-", "_")
+    dist_info = f"{distribution_name}-{sentinel.__version__}.dist-info"
     with zipfile.ZipFile(wheel_path) as wheel:
         top_level = {name.split("/")[0] for name in wheel.namelist()}
     assert top_level == {"sentinel", dist_info}
@@ -124,7 +127,7 @@ def test_wheel_metadata_matches_pyproject(wheel_path: Path) -> None:
             name for name in wheel.namelist() if name.endswith(".dist-info/METADATA")
         )
         metadata = email.parser.Parser().parsestr(wheel.read(metadata_name).decode("utf-8"))
-    assert metadata["Name"] == "sentinel"
+    assert metadata["Name"] == pyproject["project"]["name"]
     assert metadata["Version"] == sentinel.__version__
     assert metadata["Requires-Python"] == pyproject["project"]["requires-python"]
     runtime_dependencies = [
