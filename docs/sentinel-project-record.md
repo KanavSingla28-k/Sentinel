@@ -268,7 +268,20 @@ Feasible, and no longer theoretically feasible — every P0 issue found across t
 > walkthrough (`docs/architecture.md`), the failure-handling deep dive (`docs/failure-handling.md`),
 > and the authoritative known-limitations list (`docs/known-limitations.md`); zero production-code
 > changes.
-> Next: Phase 16 — packaging & distribution.
+> Phase 16 (packaging & distribution, PR #17) added the build metadata, wheel test suite
+> (fresh-venv install smoke, version tripwire), the `packaging` CI job, and the `publish` job
+> (PyPI upload on `v*` tags, guarded by the `PYPI_TOKEN` secret). Phase 17's in-repo example apps
+> were superseded by decision: integration was proven in the real PDFTalk application instead —
+> all 8 scenarios (normal 429s, fail-closed 503, recovery, multi-process, multi-tenant isolation,
+> auth, Lua script reload after Redis restart, observability) passed against the vendored
+> `sentinel-0.1.0` wheel; no genuine Sentinel defects surfaced (two pre-existing PDFTalk-side
+> issues recorded there: 500 on non-UUID `sub`, structlog dropping `extra` fields).
+> Phase 18 (production readiness review & v1.0.0) ran the full gate suite green on real Redis
+> (302 tests, 100% coverage, mypy/ruff/pre-commit, benchmark smoke), walked the known-limitations
+> list with no blocking findings, bumped the version to 1.0.0, tagged `v1.0.0`, and published
+> `sentinel 1.0.0` to PyPI; see `docs/phase-18-plan.md`.
+> Next: post-V1 — the release is out; remaining items are the deferred V2 boundaries (JWKS,
+> Redis Cluster) from `docs/known-limitations.md`.
 
 > **Next.** Not another document. Build V1 against this spec, then kill Redis mid-traffic and run concurrent requests across 3 instances — the real adversarial test is load, not a fourth review.
 
