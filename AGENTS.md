@@ -30,7 +30,7 @@ two services with deliberately different policy semantics:
 - `sentinel/observability.py` — `SentinelObservability` (injected into `SentinelGuard`, like `breaker`/`emergency`): `record_decision(tenant_hash, endpoint_id, decision, latency_micro, breaker_state)` emits a WARNING deny log (structured `extra` fields; never raw tenant) and increments `sentinel_decisions_total` + `sentinel_evaluate_latency_microseconds`, both labeled ONLY by `endpoint_id`/`decision_reason`. Process-wide collectors registered once on the default registry; injectable `logger`/`registry` for tests.
 - `sentinel/http.py` — `SentinelGuard` FastAPI integration: `guard_for(endpoint_id)` dependency; `await guard.load_scripts()` required before first request; denied reasons map to 429 (with `Retry-After`) or 503 (`_denied_status`, `_HTTP_429_REASONS`, `_HTTP_503_REASONS`); Phase 12 emits decision telemetry (latency measured around `limiter.evaluate`).
 - `benchmarks/benchmark.py` — Phase 14 dependency-free benchmark harness (B1–B9 cells × concurrency {1,8}: unguarded / with-Sentinel / detached / short-circuit / dead-port fail-open + fail-closed; p50/p95/p99, API+Redis CPU, decision-reason error rates, environment block; `--smoke`/`--out`/`--reps`); baseline in `docs/benchmark-results.md`. The live client uses a benchmark-specific 5s socket budget (`BENCHMARK_SOCKET_TIMEOUT_SECONDS`); B7–B9 dead-port clients keep the production 20ms fail-fast budget so the failure-path measurements are unchanged.
-- `tests/` — 22 files, 294 tests (23 `security`-marked, 10 `slow`-marked incl. `test_benchmark_smoke.py`; see Testing below)
+- `tests/` — 22 files, 302 tests (23 `security`-marked, 17 `slow`-marked incl. `test_benchmark_smoke.py`; see Testing below)
 - `README.md` — library entry point (install, quickstart, config tables, doc links)
 - `docs/` — `sentinel-project-record.md` (canonical, V1 spec frozen; `vision.md` superseded), `implementation_plan.md` (phase roadmap), `phase-15-plan.md` (executed Phase 15 plan) + `architecture.md` + `failure-handling.md` + `known-limitations.md` (Phase 15 deliverables), `phase-14-plan.md` + `benchmark-results.md` (executed Phase 14 plan + baseline), `phase-13-plan.md` (executed Phase 13 plan; template for future phase plans), `phase-12-plan.md`, `phase-11-plan.md`, `phase-8-10-summary.md`, `assets/*.svg`
 - `docker-compose.yml` — Redis 7 with `noeviction` + bounded `maxmemory` (required config)
@@ -51,7 +51,7 @@ two services with deliberately different policy semantics:
 ## Verified quality gates (all green at last run)
 
 ```
-pytest                                  # 294 passed (incl. integration tests against real Redis)
+pytest                                  # 302 passed (incl. integration tests against real Redis)
 pytest --cov=sentinel --cov-report=term-missing   # 100% coverage
 python benchmarks/benchmark.py --smoke  # pass (subprocess-driven in the slow suite)
 mypy sentinel                           # strict, clean
@@ -67,17 +67,34 @@ pre-commit run --all-files              # clean
 
 ## Work history (most recent first)
 
-1. **Released V1 (Phase 18, branch `chore/release-v1.0.0`):** production-readiness review +
-   `v1.0.0` release. Pre-flight gates re-run green on real Redis (302 passed — note: PDFTalk's
-   auth-protected `pdftalk-redis` container occupies host 6379, so local integration runs need
-   `SENTINEL_REDIS_URL=redis://localhost:6380/0` against a dedicated `sentinel-test-redis`
-   container; 100% coverage, mypy/ruff/pre-commit clean, benchmark smoke pass, CI green on main
-   @ `32f74c6`). P0 triage: known-limitations walk with no blocking findings; PDFTalk integration
-   (see below) dispositioned as app-side issues only. Bumped version `0.1.0 → 1.0.0` (both
-   locations, tripwire green), ticked checklist + project record §11, tagged `v1.0.0`, published
-   to PyPI via the `v*`-tag publish job (`PYPI_TOKEN` secret required), fresh-venv install smoke
-   verified, GitHub Release created, post-release dev bump `1.1.0.dev0`. Phase 18 plan:
-   `docs/phase-18-plan.md` (includes the Phase 17 disposition record).
+1. **Post-release fixes + v1.0.1 (PRs #19–#20, branch `chore/post-release-hygiene`):**
+   - **PyPI name conflict discovered:** `v1.0.0` was never published — the tag-time publish run
+     failed (missing `PYPI_TOKEN`), and by the time the secret existed the name `sentinel` was
+     already taken on PyPI by an unrelated package ("Create sentinel objects, akin to None,
+     NotImplemented, Ellipsis"). Renamed the distribution to `sentinel-rate-limiter` (PR #19,
+     `fix/pypi-package-name`; import name `sentinel` unchanged) and re-released as `v1.0.1`
+     (PR #20) — the first and only live PyPI release is `sentinel-rate-limiter 1.0.1`
+     (verified via PyPI JSON: correct metadata, wheel + sdist, fresh-venv installable).
+   - Hygiene sweep: dev bump `1.1.0.dev0` (both locations), README/AGENTS/project-record
+     refreshed (302 tests, 17 `slow`-marked, 23 `security`-marked), GitHub Releases created
+     for `v1.0.0` + `v1.0.1` (v1.0.0 notes disclose the never-published status), stale
+     branches deleted (`chore/release-v1.0.0`, `chore/release-v1.0.1`, `fix/pypi-package-name`,
+     `feat/examples`), `main == origin/main`.
+   - Wheel contents verified clean against the Phase 16 decision: only `sentinel/*.py` +
+     `py.typed` + `lua/*.lua` + dist-info — no `tests/`/`benchmarks/`/`examples/`/docs/leaks
+     (the `FORBIDDEN_WHEEL_DIRS` regression test covers the wheel; the sdist legitimately
+     carries `tests/`, standard setuptools behavior).
+1. **Released V1 (Phase 18, branch `chore/release-v1.0.0`, PR #18):** production-readiness
+   review + `v1.0.0` tag. Pre-flight gates re-run green on real Redis (302 passed — note:
+   PDFTalk's auth-protected `pdftalk-redis` container occupies host 6379, so local integration
+   runs need `SENTINEL_REDIS_URL=redis://localhost:6380/0` against a dedicated
+   `sentinel-test-redis` container; 100% coverage, mypy/ruff/pre-commit clean, benchmark smoke
+   pass, CI green on main @ `32f74c6`). P0 triage: known-limitations walk with no blocking
+   findings; PDFTalk integration (see below) dispositioned as app-side issues only. Bumped
+   version `0.1.0 → 1.0.0` (both locations, tripwire green), ticked checklist + project record
+   §11, tagged `v1.0.0`. Phase 18 plan: `docs/phase-18-plan.md` (includes the Phase 17
+   disposition record). The PyPI publish step of this release ultimately shipped as
+   `sentinel-rate-limiter 1.0.1` (see entry above).
 2. **Phase 17 satisfied by real-app integration (PDFTalk, supersedes in-repo `examples/`):**
    integration testing in the real PDFTalk FastAPI app against the vendored
    `sentinel-0.1.0-py3-none-any.whl` wheel (built from the Phase 16 packaging branch). All 8
@@ -292,17 +309,18 @@ pre-commit run --all-files              # clean
 
 ## Where things stand
 
-- Branch `chore/release-v1.0.0`, clean working tree, based on `main` at HEAD `32f74c6`
-  ("Phase 16: Packaging & distribution (#17)"). Phases 0–18 complete; `v1.0.0` tagged and
-  published to PyPI. Local `main == origin/main`; the release PR (#18) is the last squash-merge.
-  Stale local branches: `feat/examples` (points at `32f74c6`), `docs/phase-15`, `chore/init-repo`,
-  `feat/domain-models`, `feat/failure-handling` — hygiene target for the post-release sweep.
+- Branch `chore/post-release-hygiene`, clean working tree, based on `main` at HEAD `83c0705`
+  ("chore(release): v1.0.1 (#20)"). Phases 0–18 complete; `v1.0.0` + `v1.0.1` tagged; the only
+  live PyPI release is `sentinel-rate-limiter 1.0.1` (import name `sentinel` unchanged; the
+  `v1.0.0` publish never landed — see work-history entry 1). Version bumped to `1.1.0.dev0`
+  (both locations) post-release. Local `main == origin/main`; stale branches cleaned
+  (`chore/release-v1.0.0`, `chore/release-v1.0.1`, `fix/pypi-package-name`, `feat/examples`).
 - **Implemented:** all phases 0–18 of the plan. `DecisionReason` (8 members) is fully exercised:
   all failure paths produce decisions and the HTTP layer maps them to 429/503. §07 security
   findings are locked in by 23 `security`-marked regression tests (dedicated CI job), including
   the Phase 12 live metrics cardinality assertion. The §09 invariants are proven under
   concurrency: exact in-process and cross-process capacity, sliding-window reference bound,
-  breaker OPEN under load, emergency cap (10 `slow`-marked tests incl. the benchmark smoke,
+  breaker OPEN under load, emergency cap (17 `slow`-marked tests incl. the benchmark smoke,
   dedicated CI job). Phase 14 baseline recorded in `docs/benchmark-results.md` (harness in
   `benchmarks/benchmark.py`); the benchmark surfaced one fail-open defect (emergency limiter
   double-refill, ~2.3× fallback rate under sustained failure) disclosed in
@@ -317,8 +335,9 @@ pre-commit run --all-files              # clean
    dives (`docs/architecture.md`, `docs/failure-handling.md`, `docs/known-limitations.md`) with
    zero code changes (see work-history entry 2). Phase 16 shipped packaging + publish CI
    (work-history entry 2); Phase 17 was satisfied by real-app integration in PDFTalk rather than
-   in-repo examples (work-history entry 2); Phase 18 shipped the v1.0.0 release (work-history
-   entry 1, plan + disposition in `docs/phase-18-plan.md`).
+   in-repo examples (work-history entry 2); Phase 18 tagged `v1.0.0` (work-history entry 1,
+   plan + disposition in `docs/phase-18-plan.md`), and the post-release sweep shipped
+   `sentinel-rate-limiter 1.0.1` + hygiene fixes (work-history entry 1).
 - **Not yet implemented (next work):**
   - Post-V1: the deferred V2 boundaries from `docs/known-limitations.md` (JWKS rotation,
     Redis Cluster, per-process fail-open scaling) — no phase plan exists yet; the project is

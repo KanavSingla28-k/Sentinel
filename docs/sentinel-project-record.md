@@ -276,10 +276,19 @@ Feasible, and no longer theoretically feasible — every P0 issue found across t
 > auth, Lua script reload after Redis restart, observability) passed against the vendored
 > `sentinel-0.1.0` wheel; no genuine Sentinel defects surfaced (two pre-existing PDFTalk-side
 > issues recorded there: 500 on non-UUID `sub`, structlog dropping `extra` fields).
-> Phase 18 (production readiness review & v1.0.0) ran the full gate suite green on real Redis
-> (302 tests, 100% coverage, mypy/ruff/pre-commit, benchmark smoke), walked the known-limitations
-> list with no blocking findings, bumped the version to 1.0.0, tagged `v1.0.0`, and published
-> `sentinel 1.0.0` to PyPI; see `docs/phase-18-plan.md`.
+> Phase 18 (production readiness review & v1.0.0, PR #18) ran the full gate suite green on real
+> Redis (302 tests, 100% coverage, mypy/ruff/pre-commit, benchmark smoke), walked the
+> known-limitations list with no blocking findings, bumped the version to 1.0.0, and tagged
+> `v1.0.0`; see `docs/phase-18-plan.md`.
+> **Post-release (PRs #19–#20):** the `v1.0.0` PyPI publish never landed (tag-time run failed on
+> a missing `PYPI_TOKEN`; by the time the secret existed, the name `sentinel` was already taken
+> on PyPI by an unrelated package). The distribution was renamed to `sentinel-rate-limiter`
+> (import name `sentinel` unchanged) and the live release shipped as `sentinel-rate-limiter
+> 1.0.1` — verified on PyPI with correct metadata, wheel + sdist, fresh-venv installable. The
+> wheel contents were verified clean against the packaging decision (only `sentinel/*.py` +
+> `py.typed` + `lua/*.lua` + dist-info; no tests/benchmarks/examples/docs leaks). Version is now
+> `1.1.0.dev0` (post-release dev bump); `v1.0.0` + `v1.0.1` GitHub Releases exist, v1.0.0's
+> notes disclosing its never-published status.
 > Next: post-V1 — the release is out; remaining items are the deferred V2 boundaries (JWKS,
 > Redis Cluster) from `docs/known-limitations.md`.
 

@@ -181,9 +181,9 @@ JWT replay handled upstream, sliding-window denials carry no `Retry-After`.
 
 ## Testing & performance
 
-- 294 tests, 100 % coverage on `sentinel/`; `security`-marked (23) and `slow`-marked (10, incl.
-  concurrency, multi-process, and failure-injection) suites run as dedicated CI jobs against
-  real Redis.
+- 302 tests, 100 % coverage on `sentinel/`; `security`-marked (23) and `slow`-marked (17, incl.
+  concurrency, multi-process, packaging, and failure-injection) suites run as dedicated CI jobs
+  against real Redis.
 - Phase 14 benchmark harness (`benchmarks/benchmark.py`, stdlib-only) with the baseline in
   `docs/benchmark-results.md`: with-Sentinel ≈ 5.2× throughput overhead at concurrency 1 (one
   loopback Redis round trip dominating), breaker short-circuit ≈ 7 µs p50, failure path ≈ the
