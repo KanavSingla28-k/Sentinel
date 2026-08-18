@@ -150,7 +150,7 @@ documented property, not a bug: idempotency keys are out of scope for V1 (see
   1/2/5 tokens/s).
 - **Integration**: `tests/test_limiter.py` fail-open/fail-closed journeys through
   `RateLimiter`; `tests/test_http.py` HTTP mapping (429 vs 503, Retry-After).
-- **Concurrency + real failure injection** (`slow` suite, `docs/phase-13-plan.md`): a dedicated
+- **Concurrency + real failure injection** (`slow` suite): a dedicated
   `SentinelRedis` pointed at a dead port (Linux surfaces `REDIS_CONNECTION_ERROR`, Windows/WSL2
   `REDIS_TIMEOUT` — both accepted) trips the breaker under 50-coroutine load while the
   emergency limiter caps fail-open traffic; fail-closed counterparts deny everything.
