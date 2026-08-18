@@ -134,7 +134,7 @@ Correctness under concurrency comes from three layers:
 Proven under load: exact token-bucket capacity across 50 racing coroutines and across 3 spawned
 processes; sliding-window admission never exceeds the sequential reference bound; breaker trips
 OPEN under real dead-port injection; the emergency limiter caps fail-open traffic at the
-configured per-process fallback rate (Phase 13, `docs/phase-13-plan.md`).
+configured per-process fallback rate (Phase 13).
 
 ---
 
@@ -155,7 +155,7 @@ bucket fields; both enforce the Lua-exactness bounds above and the `endpoint_id`
 
 ## 7 · Invariants (non-negotiable)
 
-The frozen spec (project record) and the repo's `AGENTS.md` hold these eight as absolute:
+The frozen spec (project record) holds these eight as absolute:
 
 1. Redis `TIME()` is the only clock in the rate-limiting scripts.
 2. Integer microtokens only — no floats in state.

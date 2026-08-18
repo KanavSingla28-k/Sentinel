@@ -197,7 +197,7 @@ Four invariants, tested aggressively rather than formally proven — enough to d
 
 ### Phase 13 concurrency verification
 
-The four §09 invariants are now also proven under concurrency (`pytest -m slow`, `docs/phase-13-plan.md`):
+The four §09 invariants are now also proven under concurrency (`pytest -m slow`):
 
 - **Exact capacity under concurrency.** 50 coroutines racing one fresh token-bucket key (`refill_rate=0`) admit exactly `capacity` and deny the rest — in-process (gated in-flight so the hardcoded 20 ms socket budget is never exceeded on any host) and cross-process: 3 spawned processes × 20 evaluations sharing one key admit exactly `capacity` total on healthy Redis (CI Linux).
 - **Sliding-window bound under concurrency.** A 50-coroutine burst into one window never admits more than the sequential reference simulation, and never below `limit - 1`.
@@ -207,12 +207,14 @@ The four §09 invariants are now also proven under concurrency (`pytest -m slow`
 
 ### Phase 14 benchmark verification
 
-A dependency-free harness (`benchmarks/benchmark.py`, `docs/phase-14-plan.md`) records the
+A dependency-free harness (`benchmarks/benchmark.py`) records the
 baseline (`docs/benchmark-results.md`): with-Sentinel overhead ≈ 5.2× throughput at c=1 (p50
 150 → 827 µs, one loopback Redis round trip dominating), breaker short-circuit ≈ 7 µs p50
 (~96k ops/s), and failure-path latency ≈ the ~31 ms dead-port socket timeout (p99 ≈ 27 ms) —
 the limiter itself is not the failure-path cost. Numbers are single-machine loopback, disclosed
-as-is; no thresholds asserted.
+as-is; no thresholds asserted. (Fresh three-run re-execution on 2026-08-18, post-v1.0.1,
+confirmed the same story — no regression, failure-path p99 ≈ 27–33 ms, post-fix B8 counts
+intact; current numbers in `docs/benchmark-results.md`.)
 
 The benchmark surfaced one production defect, deliberately **not** fixed in the benchmark-only
 phase: the fail-open emergency limiter double-refills on denied calls (`emergency.py` persists
@@ -279,7 +281,7 @@ Feasible, and no longer theoretically feasible — every P0 issue found across t
 > Phase 18 (production readiness review & v1.0.0, PR #18) ran the full gate suite green on real
 > Redis (302 tests, 100% coverage, mypy/ruff/pre-commit, benchmark smoke), walked the
 > known-limitations list with no blocking findings, bumped the version to 1.0.0, and tagged
-> `v1.0.0`; see `docs/phase-18-plan.md`.
+> `v1.0.0`.
 > **Post-release (PRs #19–#20):** the `v1.0.0` PyPI publish never landed (tag-time run failed on
 > a missing `PYPI_TOKEN`; by the time the secret existed, the name `sentinel` was already taken
 > on PyPI by an unrelated package). The distribution was renamed to `sentinel-rate-limiter`
