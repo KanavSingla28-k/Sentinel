@@ -10,7 +10,7 @@ overrun (expensive OCR compute) fails closed; an endpoint that must never block 
 fails open, but is capped by an in-process emergency limiter so fail-open never means unlimited.
 
 > **Getting started?** Jump straight to the step-by-step guide:
-> [**M-INSTALLATION.md**](M-INSTALLATION.md) — from `pip install` to a working
+> [**Installation**](docs/installation.md) — from `pip install` to a working
 > FastAPI integration with configuration and example usage.
 
 ---
@@ -26,6 +26,7 @@ fails open, but is capped by an in-process emergency limiter so fail-open never 
 - [Benchmarking results](#benchmarking-results)
 - [Observability](#observability)
 - [Known limitations](#known-limitations)
+- [Documentation](#documentation)
 - [Installation](#installation)
 - [Development](#development)
 - [License](#license)
@@ -263,10 +264,22 @@ production:
 
 ---
 
+## Documentation
+
+The full Sentinel documentation site is built with MkDocs and deployed to GitHub Pages:
+
+[**Read the full Sentinel documentation →**](https://kanavsingla28-k.github.io/Sentinel/)
+
+Contents: Home · Installation · Quick Start · Configuration · Usage · Architecture ·
+Observability · Failure Semantics · Failure Handling · Known Limitations · Benchmark Results ·
+Project Record. The markdown sources live in [`docs/`](docs/).
+
+---
+
 ## Installation
 
 **Step-by-step installation, configuration, FastAPI integration, and example usage:**
-[**M-INSTALLATION.md**](M-INSTALLATION.md).
+[**Installation guide**](docs/installation.md).
 
 Quick reference:
 

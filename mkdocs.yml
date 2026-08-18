@@ -1,0 +1,65 @@
+site_name: Sentinel
+site_description: Application-aware, tenant-aware, distributed rate limiting for FastAPI
+site_url: https://kanavsingla28-k.github.io/Sentinel/
+repo_url: https://github.com/KanavSingla28-k/Sentinel
+repo_name: KanavSingla28-k/Sentinel
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: installation.md
+      - Quick Start: quickstart.md
+  - Guides:
+      - Configuration: configuration.md
+      - Usage: usage.md
+      - Observability: observability.md
+  - Concepts:
+      - Architecture: architecture.md
+      - Failure Semantics: failure-semantics.md
+      - Failure Handling: failure-handling.md
+      - Known Limitations: known-limitations.md
+  - Project Record:
+      - Benchmark Results: benchmark-results.md
+      - Project Record: sentinel-project-record.md

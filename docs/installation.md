@@ -78,7 +78,7 @@ Sentinel checks this at startup (`assert_noeviction()`) and raises if the policy
 
 Sentinel loads a strict JSON config (`SentinelConfig` is frozen; unknown keys are **rejected**,
 and policy dict keys must match the policy's `endpoint_id`). The repo has a working example at
-[`sentinel.example.json`](sentinel.example.json) — copy it and edit (pip-only consumers can
+[`sentinel.example.json`](https://github.com/KanavSingla28-k/Sentinel/blob/main/sentinel.example.json) — copy it and edit (pip-only consumers can
 grab the same file from the GitHub repo, or write it by hand following the annotated sections
 below):
 
@@ -268,7 +268,7 @@ and watch each endpoint behave (`docker compose stop redis` — start it again w
 The circuit breaker also trips OPEN after 5 consecutive failures and short-circuits for 30 s —
 recovering requests are not penalized (only genuine Redis successes reset it), and a down Redis
 never makes a request wait beyond the 20 ms socket budget. Full decision table and state
-machine: [`docs/failure-handling.md`](docs/failure-handling.md).
+machine: [failure-handling.md](failure-handling.md).
 
 ## 8. Observability
 
@@ -300,10 +300,10 @@ The 8 `DecisionReason` values: `RATE_LIMITED`, `EMERGENCY_LOCAL_LIMIT`, `FAIL_CL
 
 ## 10. Where to go next
 
-- [`README.md`](README.md) — overview, architecture, test + benchmark results
-- [`docs/architecture.md`](docs/architecture.md) — module map, request journey, clock discipline, invariants
-- [`docs/failure-handling.md`](docs/failure-handling.md) — the resiliency triangle in depth
-- [`docs/known-limitations.md`](docs/known-limitations.md) — read before production (per-process breaker, HS* only, no idempotency keys, ...)
-- [`docs/benchmark-results.md`](docs/benchmark-results.md) — measured overhead and failure-path latency
-- [`docs/sentinel-project-record.md`](docs/sentinel-project-record.md) — the frozen V1 spec and review history
-- [`sentinel.example.json`](sentinel.example.json) — the working example config
+- [Home](index.md) — the documentation homepage (based on the README)
+- [Architecture](architecture.md) — module map, request journey, clock discipline, invariants
+- [Failure handling](failure-handling.md) — the resiliency triangle in depth
+- [Known limitations](known-limitations.md) — read before production (per-process breaker, HS* only, no idempotency keys, ...)
+- [Benchmark results](benchmark-results.md) — measured overhead and failure-path latency
+- [Project record](sentinel-project-record.md) — the frozen V1 spec and review history
+- [`sentinel.example.json`](https://github.com/KanavSingla28-k/Sentinel/blob/main/sentinel.example.json) — the working example config

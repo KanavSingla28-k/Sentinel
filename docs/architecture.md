@@ -41,6 +41,30 @@ HTTP guard as the only FastAPI-aware layer.
 What happens for one request to a guarded endpoint (`SentinelGuard.guard_for`,
 `sentinel/http.py:101`):
 
+```mermaid
+flowchart TD
+    A[Request arrives] --> B{Bearer token?}
+    B -- no --> AUTH_ERR[401 before any Redis call]
+    B -- yes --> C[JWT verification<br/>HS* allowlist, exp + sub]
+    C -- invalid --> AUTH_ERR
+    C -- valid --> D[Policy resolution<br/>tenant, endpoint_id]
+    D -- unknown endpoint --> NOTFOUND[404]
+    D -- found --> E{Breaker OPEN?}
+    E -- yes --> F{Fail mode?}
+    E -- no --> G[Lua script evaluation<br/>Redis TIME clock]
+    G -- RedisError --> H[Classify + count failure]
+    G -- success --> I[Record success, reset breaker]
+    H --> F
+    F -- fail_open --> J[Emergency limiter]
+    F -- fail_closed --> K[503 deny]
+    J -- allowed --> L[Handler runs<br/>request.state.decision]
+    J -- denied --> M[429 emergency cap]
+    I --> L
+    K --> N[Decision recorded<br/>metrics + deny log]
+    L --> N
+    M --> N
+```
+
 1. **Bearer token extraction** (`sentinel/http.py:63`). The `Authorization` header must be a
    non-empty `Bearer <token>`; anything else raises 401 with `WWW-Authenticate: Bearer` before
    any Redis call. The `X-Tenant-ID` header is never read — tenant identity comes only from a
@@ -128,7 +152,7 @@ Correctness under concurrency comes from three layers:
    (25 tests) compares real Redis output against the reference across generated traffic
    patterns.
 3. **Failure isolation** — the breaker + emergency limiter (see
-   `docs/failure-handling.md`) keep a Redis outage from becoming an unbounded allowance or a
+   [failure-handling.md](failure-handling.md)) keep a Redis outage from becoming an unbounded allowance or a
    request-hang. Only genuine Redis successes reset the breaker's failure count.
 
 Proven under load: exact token-bucket capacity across 50 racing coroutines and across 3 spawned
@@ -189,9 +213,9 @@ The frozen spec (project record) holds these eight as absolute:
 
 ## 9 · Related documents
 
-- `docs/sentinel-project-record.md` — canonical frozen V1 spec (problem, reviews, ADRs, §06
+- [sentinel-project-record.md](sentinel-project-record.md) — canonical frozen V1 spec (problem, reviews, ADRs, §06
   failure table, §07 security findings, §09 testing).
-- `docs/failure-handling.md` — the resiliency triangle in depth (classification, breaker,
+- [failure-handling.md](failure-handling.md) — the resiliency triangle in depth (classification, breaker,
   emergency limiter, HTTP semantics, failure-path measurements).
-- `docs/known-limitations.md` — every accepted V1 limitation and its ADR/source.
-- `README.md` — entry point: install, config, FastAPI wiring, quick reference.
+- [known-limitations.md](known-limitations.md) — every accepted V1 limitation and its ADR/source.
+- [Home](index.md) — entry point: install, config, FastAPI wiring, quick reference.

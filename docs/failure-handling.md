@@ -92,7 +92,7 @@ The fail-open cap: a per-process, in-memory token bucket keyed by `endpoint_id` 
   (`CIRCUIT_OPEN`, `REDIS_TIMEOUT`, ...) with `allowed=True` (`sentinel/limiter.py:173`) — the
   decision table stays lossless: metrics count them, the deny log does not.
 
-Limits of the emergency limiter (see `docs/known-limitations.md`): per-process allowance
+Limits of the emergency limiter (see [known-limitations.md](known-limitations.md)): per-process allowance
 multiplies with instance count, and buckets are per-endpoint — no cross-tenant fairness during
 an outage.
 
@@ -120,7 +120,7 @@ Auth failures (missing/invalid/expired token) return 401 with `WWW-Authenticate:
 
 ## 6 · Measured failure-path latency
 
-Phase 14 baseline, disclosed as-is (single-machine Docker-Compose loopback; `docs/benchmark-results.md`):
+Phase 14 baseline, disclosed as-is (single-machine Docker-Compose loopback; [benchmark-results.md](benchmark-results.md)):
 
 | Cell | Journey | p50 | p99 |
 |---|---|---|---|
@@ -139,7 +139,7 @@ near the benchmark client's 5 s budget (a benchmark-only override; production ke
 A Redis call can time out locally while the script still commits server-side. A client retry
 after a timeout may consume additional quota beyond what the client believes it used. This is a
 documented property, not a bug: idempotency keys are out of scope for V1 (see
-`docs/known-limitations.md`).
+[known-limitations.md](known-limitations.md)).
 
 ---
 

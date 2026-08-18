@@ -37,7 +37,7 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/KanavSingla28-k/Sentinel"
 Source = "https://github.com/KanavSingla28-k/Sentinel"
-Documentation = "https://github.com/KanavSingla28-k/Sentinel/tree/main/docs"
+Documentation = "https://kanavsingla28-k.github.io/Sentinel/"
 
 [project.optional-dependencies]
 dev = [
@@ -51,6 +51,10 @@ dev = [
     "pre-commit>=3.7",
     "build>=1.2",
     "twine>=5",
+]
+docs = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
 ]
 
 [tool.setuptools.packages.find]

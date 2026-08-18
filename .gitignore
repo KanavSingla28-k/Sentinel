@@ -13,6 +13,9 @@ venv/
 # Benchmark outputs
 benchmarks/results/
 
+# MkDocs build output
+site/
+
 # Tooling caches
 .ruff_cache/
 .mypy_cache/
