@@ -10,7 +10,7 @@ overrun (expensive OCR compute) fails closed; an endpoint that must never block 
 fails open, but is capped by an in-process emergency limiter so fail-open never means unlimited.
 
 > **Getting started?** Jump straight to the step-by-step guide:
-> [**INSTALLATION.md**](INSTALLATION.md) — from `pip install` to a working
+> [**M-INSTALLATION.md**](M-INSTALLATION.md) — from `pip install` to a working
 > FastAPI integration with configuration and example usage.
 
 ---
@@ -266,7 +266,7 @@ production:
 ## Installation
 
 **Step-by-step installation, configuration, FastAPI integration, and example usage:**
-[**INSTALLATION.md**](INSTALLATION.md).
+[**M-INSTALLATION.md**](M-INSTALLATION.md).
 
 Quick reference:
 
