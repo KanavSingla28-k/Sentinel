@@ -15,19 +15,20 @@ the pieces in `sentinel/` fit together and why they are shaped the way they are.
 
 | Module | Responsibility | Key types / entry points |
 |---|---|---|
-| `sentinel/models.py` | Domain contracts | `Policy` (frozen, `extra="forbid"`, Lua-exactness bounds), `Decision`, `DecisionReason` (8 members), `AlgorithmType`, `FailMode` |
-| `sentinel/config.py` | Strict static config loading | `SentinelConfig`, `AppConfig` (JWT secret + HS* allowlist), `load_config(path)` |
-| `sentinel/resolver.py` | Policy lookup | `StaticPolicyResolver.resolve(tenant_id, endpoint_id) -> Policy \| None` |
+| `sentinel/models.py` | Domain contracts | `Policy` (frozen, `extra="forbid"`, Lua-exactness bounds, `identity: IdentityMode`), `Decision`, `DecisionReason` (8 members), `AlgorithmType`, `FailMode`, `IdentityMode` (`TENANT_JWT` / `ANONYMOUS`) |
+| `sentinel/config.py` | Strict static config loading | `SentinelConfig`, `AppConfig` (JWT secret + HS* allowlist, anonymous cookie settings), `load_config(path)` |
+| `sentinel/resolver.py` | Policy lookup | `StaticPolicyResolver.resolve(tenant_id, endpoint_id) -> Policy \| None`, `resolve_anonymous(endpoint_id) -> Policy \| None` |
 | `sentinel/redis.py` | Redis foundation | `SentinelRedis` (pool, 20 ms fail-fast budget, `assert_noeviction()`), `ScriptLoader` (load / execute, NOSCRIPT → re-load once) |
 | `sentinel/lua.py` | Script registry | `TOKEN_BUCKET_SCRIPT`, `SLIDING_WINDOW_SCRIPT`, `script_source(name)`, `load_scripts(loader)` |
 | `sentinel/lua/*.lua` | Atomic algorithms | `token_bucket.lua`, `sliding_window.lua` |
 | `sentinel/algorithms.py` | Pure Python references | `token_bucket_evaluate`, `sliding_window_evaluate`, `TOKENS_PER_TOKEN_MICRO = 1_000_000` |
-| `sentinel/limiter.py` | Orchestration | `RateLimiter.evaluate(policy, key)`, `TokenBucketStrategy`, `SlidingWindowStrategy`, `build_bucket_key`, `hash_tenant` |
+| `sentinel/limiter.py` | Orchestration | `RateLimiter.evaluate(policy, key)`, `RateLimiter.evaluate_anonymous(policy, keys)`, `TokenBucketStrategy`, `SlidingWindowStrategy`, `build_bucket_key`, `build_anonymous_key`, `hash_tenant` |
+| `sentinel/anonymous.py` | Anonymous identity (Phase 19) | `mint_cookie`, `parse_cookie`, `client_ip`, `anonymous_cookie_identity`, `anonymous_ip_identity`, `hash_identity` |
 | `sentinel/errors.py` | Failure classification | `classify_redis_error(exc) -> DecisionReason`, `ScriptMissingError` |
 | `sentinel/circuit_breaker.py` | Per-process breaker | `CircuitBreaker` (CLOSED / OPEN / HALF_OPEN, threshold 5, 30 s quarantine) |
 | `sentinel/emergency.py` | Fail-open cap | `TokenBucketEmergencyLimiter`, `EmergencyOutcome`, `EmergencyLimiter` protocol |
 | `sentinel/auth.py` | JWT verification | `verify_bearer_token(token, secret, algorithms) -> sub`, `AuthenticationError`, `AuthReason` |
-| `sentinel/http.py` | FastAPI integration | `SentinelGuard`, `guard_for(endpoint_id)` dependency |
+| `sentinel/http.py` | FastAPI integration | `SentinelGuard`, `guard_for(endpoint_id)` / `anonymous_guard_for(endpoint_id)` dependencies |
 | `sentinel/observability.py` | Logs + metrics | `SentinelObservability.record_decision(...)` |
 
 The module boundaries mirror the six-stage request pipeline of the spec (project record §03):
@@ -100,6 +101,53 @@ flowchart TD
    `tenant_hash` (never the raw tenant), `endpoint_id`, `decision_reason`, `latency_micro`,
    `breaker_state`.
 
+### Anonymous requests (Phase 19)
+
+Unauthenticated endpoints (`auth.login`, `auth.signup`, `auth.reset`) have no JWT `sub` to key
+on. They are guarded through `SentinelGuard.anonymous_guard_for(endpoint_id)`
+(`sentinel/http.py:172`), which shares every mechanism of the tenant journey — breaker,
+emergency limiter, observability, 429/503 mapping — but derives identity differently:
+
+1. **Cookie read** (`sentinel/anonymous.py:51`). The configured `anonymous_cookie_name` cookie
+   (default `sentinel_anon_id`) is parsed and verified: format
+   `<client_id>.<exp_epoch>.<hmac_hex>`, `client_id` = 32 hex chars (16 CSRNG bytes), MAC =
+   `HMAC-SHA256(anonymous_cookie_secret, "sentinel-anon:v1:{client_id}:{exp}")`. Tampered,
+   malformed, or expired cookies are treated as *missing* (all-or-nothing, `parse_cookie`
+   returns `None`).
+2. **Minting** (`sentinel/anonymous.py:84`). When no valid cookie is present, a fresh id is
+   minted and signed. The cookie is delivered via FastAPI `Response` injection as
+   `HttpOnly; SameSite=lax; Secure` (configurable), with `Max-Age` from
+   `anonymous_cookie_ttl_seconds`. **A denied request never receives the cookie**
+   (SEC-ANON-06): flooders without cookies stay bounded by the IP bucket.
+3. **Client IP** (`sentinel/anonymous.py:110`). `request.client.host` — the socket peer as
+   resolved by the ASGI server's trusted-proxy layer. The library never reads
+   `X-Forwarded-For`/`X-Real-IP`/`CF-Connecting-IP` (SEC-ANON-01): raw header values are the
+   one thing a client fully controls. Missing or non-IP peers collapse to a single `unknown`
+   bucket (over-blocking, never quota bypass); private/loopback peers warn.
+4. **Dual-bucket evaluation** (`RateLimiter.evaluate_anonymous`, `sentinel/limiter.py:190`).
+   With a valid cookie: keys `[cookie, ip]`; without: `[ip]` only. The decision is ALLOWED
+   only if every bucket allows (AND semantics); the first denial wins and no further key is
+   evaluated. Store-failure outcomes (`REDIS_*`, `CIRCUIT_OPEN`, `FAIL_CLOSED`,
+   `EMERGENCY_LOCAL_LIMIT`) are terminal: they reflect Redis health, not a per-key quota, and
+   re-evaluating would double-consume the per-process emergency limiter on the fail-open path.
+5. **Identity hygiene**. Bucket identities are `anon:cookie:{client_id}` / `anon:ip:{ip}` and
+   are sha256-hashed by `build_anonymous_key` into the separate `sentinel:v2:` keyspace
+   (invariant #4's hygiene extended to anonymous identity). The deny log carries
+   `identity_mode` + `identity_hash` of the *primary* identity (cookie when present, else IP);
+   raw client ids and IPs never reach keys, logs, or metrics (SEC-ANON-03).
+
+```mermaid
+flowchart TD
+    A[Anonymous request] --> B{Cookie valid?}
+    B -- yes --> C[Identity: cookie + ip]
+    B -- no --> D[Mint signed cookie<br/>delivered only if allowed]
+    D --> E[Identity: ip only]
+    C --> F[evaluate_anonymous: cookie bucket then ip bucket]
+    E --> F
+    F -- any bucket denies --> G[429 / 503 by reason]
+    F -- every bucket allows --> H[Allow + deliver cookie if minted]
+```
+
 ---
 
 ## 3 · State & key design
@@ -126,6 +174,12 @@ Phase 14 double-refill fix.
 2^52`, `TOKEN_BUCKET_MAX_CAPACITY_MICRO = TOKEN_BUCKET_MAX_RATE = 2^30`,
 `sentinel/models.py:17`), rejecting configurations whose arithmetic would leave the exactness
 envelope.
+
+**Keyspaces.** Tenant buckets live in `sentinel:v1:{sha256(tenant)}:{endpoint_id}:{policy_version}`.
+Anonymous buckets (Phase 19) live in the separate `sentinel:v2:{sha256(identity)}:{endpoint_id}:{policy_version}`
+address space — the `v2` prefix guarantees an anonymous bucket can never collide with a tenant
+bucket even for identical raw values. Both namespaces share the Lua scripts, state format, and
+no-write-on-deny contract; only the identity derivation differs.
 
 ---
 
@@ -173,7 +227,9 @@ README for a full example.
 `Policy` (`sentinel/models.py:45`) validates per-algorithm: token bucket requires
 `capacity_micro` + `refill_rate_micro_per_sec`; sliding window requires `limit` and rejects the
 bucket fields; both enforce the Lua-exactness bounds above and the `endpoint_id` pattern
-`^[a-z0-9._-]+$`.
+`^[a-z0-9._-]+$`. `Policy.identity` (`IdentityMode`, Phase 19) defaults to `TENANT_JWT` for
+backward compatibility; an `ANONYMOUS` policy additionally requires
+`app.anonymous_cookie_secret` at load time (rejected otherwise).
 
 ---
 
@@ -196,6 +252,17 @@ The frozen spec (project record) holds these eight as absolute:
    `TIME()` `now` and anchored to it.
 8. Lua product bounds enforced in `Policy` validation.
 
+**Phase 19 additions (anonymous identity).** Extends — never weakens — the above:
+
+9. `sentinel:v2:` anonymous keys hash identity strings (`anon:cookie:*` / `anon:ip:*`) with
+   the same sha256 hygiene as tenant ids; raw ids/IPs never reach keys, logs, or metrics.
+10. `request.client` (ASGI-server-resolved peer) is the only IP source — forwarding headers
+    are never read.
+11. Anonymous decisions are ALLOWED only if every bucket allows; denied requests never write
+    and never receive a minted cookie.
+12. `anonymous_cookie_secret` is required iff any anonymous policy exists; the cookie is
+    HMAC-signed (tamper/expiry rejection) and all-or-nothing on parse.
+
 ---
 
 ## 8 · Where each guarantee is proven
@@ -204,7 +271,9 @@ The frozen spec (project record) holds these eight as absolute:
 |---|---|
 | Exact token-bucket capacity | `tests/test_concurrency.py`, `tests/test_concurrency_multiprocess.py`, `tests/test_limiter_integration.py` |
 | Sliding-window reference bound | `tests/test_lua_parity.py`, `tests/test_algorithms.py`, `tests/test_algorithms_properties.py` |
-| Identity / spoofing | `tests/test_security.py` (SEC-03, SEC-08), `tests/test_http.py` |
+| Identity / spoofing | `tests/test_security.py` (SEC-03, SEC-08, SEC-ANON-01/02/03), `tests/test_http.py` |
+| Anonymous guard semantics | `tests/test_http_anonymous.py`, `tests/test_anonymous_integration.py`, `tests/test_anonymous.py` |
+| Anonymous dual-bucket concurrency | `tests/test_concurrency.py` (conc-30/31) |
 | Failure semantics | `tests/test_errors.py`, `tests/test_circuit_breaker.py`, `tests/test_emergency.py`, `tests/test_limiter.py` |
 | Noeviction startup check | `tests/test_redis.py` (`security`-marked) |
 | Overhead + failure-path latency | `docs/benchmark-results.md` (Phase 14 baseline, disclosed as-is) |

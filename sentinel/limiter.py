@@ -1,4 +1,4 @@
-"""Rate limiting orchestration for Sentinel (Phases 6, 8, 9).
+"""Rate limiting orchestration for Sentinel (Phases 6, 8, 9, 19).
 
 The RateLimiter maps a resolved Policy and a bucket key to a Decision by
 delegating to the matching algorithm strategy, which executes the Phase 4 Lua
@@ -11,15 +11,23 @@ either allows with the underlying failure reason or denies with
 EMERGENCY_LOCAL_LIMIT. Only genuine Redis successes reset the breaker.
 Programming errors (KeyError, RuntimeError, ...) are not caught and
 propagate unchanged.
+
+Anonymous policies (Phase 19) evaluate up to two buckets — the server-issued
+client cookie identity and the trusted-client IP — through ``evaluate_anonymous``:
+the decision is ALLOWED only if every bucket allows it. Store-failure outcomes
+(REDIS_*, CIRCUIT_OPEN, FAIL_CLOSED, EMERGENCY_LOCAL_LIMIT) are per-request
+global, not per-key, so the first such outcome is terminal: evaluating the
+remaining keys would double-consume the per-process emergency limiter on the
+fail-open path.
 """
 
-import hashlib
 import time
 from typing import Protocol
 
 from redis.exceptions import RedisError
 
 from sentinel.algorithms import TOKENS_PER_TOKEN_MICRO
+from sentinel.anonymous import hash_identity
 from sentinel.circuit_breaker import CircuitBreaker
 from sentinel.emergency import EmergencyLimiter
 from sentinel.errors import classify_redis_error
@@ -33,9 +41,20 @@ from sentinel.models import (
 )
 from sentinel.redis import ScriptLoader
 
+_ANONYMOUS_TERMINAL_REASONS = frozenset(
+    {
+        DecisionReason.REDIS_TIMEOUT,
+        DecisionReason.REDIS_CONNECTION_ERROR,
+        DecisionReason.REDIS_NOSCRIPT_RETRY,
+        DecisionReason.CIRCUIT_OPEN,
+        DecisionReason.FAIL_CLOSED,
+        DecisionReason.EMERGENCY_LOCAL_LIMIT,
+    }
+)
+
 
 def hash_tenant(tenant_id: str) -> str:
-    return hashlib.sha256(tenant_id.encode("utf-8")).hexdigest()
+    return hash_identity(tenant_id)
 
 
 def build_bucket_key(
@@ -45,6 +64,21 @@ def build_bucket_key(
 ) -> str:
     tenant_hash = hash_tenant(tenant_id)
     return f"sentinel:v1:{tenant_hash}:{endpoint_id}:{policy_version}"
+
+
+def build_anonymous_key(
+    identity: str,
+    endpoint_id: str,
+    policy_version: int,
+) -> str:
+    """Build a Phase 19 bucket key for an anonymous identity string.
+
+    The ``v2`` prefix keeps anonymous buckets in a separate address space from
+    tenant buckets; the identity (``anon:cookie:...`` / ``anon:ip:...``) is
+    sha256-hashed exactly like tenant ids.
+    """
+    identity_hash = hash_identity(identity)
+    return f"sentinel:v2:{identity_hash}:{endpoint_id}:{policy_version}"
 
 
 class RateLimitStrategy(Protocol):
@@ -152,6 +186,29 @@ class RateLimiter:
             return await self._fail_open(policy, reason)
         self._breaker.record_success()
         return decision
+
+    async def evaluate_anonymous(self, policy: Policy, keys: tuple[str, ...]) -> Decision:
+        """Evaluate the anonymous dual buckets and AND-combine them (Phase 19).
+
+        The request is ALLOWED only if every bucket allows. On ALLOW every key
+        is evaluated, so no admission is ever uncounted; on DENY no key writes
+        (the scripts' no-write-on-deny contract holds per bucket). A
+        store-failure outcome (REDIS_*, CIRCUIT_OPEN, FAIL_CLOSED,
+        EMERGENCY_LOCAL_LIMIT) is terminal: it reflects Redis health, not a
+        per-key quota, and evaluating the remaining keys would double-consume
+        the per-process emergency limiter on the fail-open path.
+        """
+        if not keys:
+            raise ValueError("evaluate_anonymous requires at least one bucket key")
+        decisions: list[Decision] = []
+        for key in keys:
+            decision = await self.evaluate(policy, key)
+            if decision.reason in _ANONYMOUS_TERMINAL_REASONS:
+                return decision
+            decisions.append(decision)
+            if not decision.allowed:
+                return decision
+        return decisions[0]
 
     async def _on_circuit_open(self, policy: Policy) -> Decision:
         if policy.fail_mode is FailMode.FAIL_CLOSED:

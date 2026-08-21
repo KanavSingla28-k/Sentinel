@@ -30,9 +30,10 @@ from typing import cast
 import pytest
 from redis.exceptions import TimeoutError as RedisTimeoutError
 from sentinel.algorithms import TOKENS_PER_TOKEN_MICRO, sliding_window_evaluate
+from sentinel.anonymous import anonymous_cookie_identity, anonymous_ip_identity
 from sentinel.circuit_breaker import BreakerState, CircuitBreaker
 from sentinel.emergency import TokenBucketEmergencyLimiter
-from sentinel.limiter import RateLimiter, build_bucket_key
+from sentinel.limiter import RateLimiter, build_anonymous_key, build_bucket_key
 from sentinel.lua import (
     SLIDING_WINDOW_SCRIPT,
     TOKEN_BUCKET_SCRIPT,
@@ -307,4 +308,59 @@ async def test_conc_21_failure_injection_fail_closed_all_denied() -> None:
     assert all(
         d.reason in {DecisionReason.FAIL_CLOSED, DecisionReason.CIRCUIT_OPEN} for d in decisions
     )
+    assert breaker.state is BreakerState.OPEN
+
+
+@pytest.mark.integration
+async def test_conc_30_anonymous_dual_bucket_50_coroutines_capacity(
+    redis_client: SentinelRedis, limiter: RateLimiter
+) -> None:
+    policy = _token_bucket_policy(capacity_micro=5 * TOKENS_PER_TOKEN_MICRO)
+    endpoint_id = f"conc-anon-{uuid.uuid4().hex}"
+    ip_key = build_anonymous_key(anonymous_ip_identity("unknown"), endpoint_id, 1)
+    cookie_key = build_anonymous_key(anonymous_cookie_identity("a" * 32), endpoint_id, 1)
+    keys = (cookie_key, ip_key)
+    try:
+        decisions = await asyncio.gather(
+            *(limiter.evaluate_anonymous(policy, keys) for _ in range(50))
+        )
+    finally:
+        await redis_client.client.delete(cookie_key, ip_key)
+    allowed, denied = _partition(decisions)
+    assert len(decisions) == 50
+    if _healthy(decisions):
+        assert len(allowed) == 5
+        assert len(denied) == 45
+        assert all(d.reason is DecisionReason.ALLOWED for d in allowed)
+        assert all(d.reason is DecisionReason.RATE_LIMITED for d in denied)
+    else:
+        assert len(_redis_admitted(decisions)) <= 5
+        assert len(_emergency_admitted(decisions)) <= 1
+        assert all(d.reason in {DecisionReason.ALLOWED, *DEAD_PORT_REASONS} for d in allowed)
+        assert all(
+            d.reason in {DecisionReason.RATE_LIMITED, DecisionReason.EMERGENCY_LOCAL_LIMIT}
+            for d in denied
+        )
+
+
+async def test_conc_31_anonymous_failure_consumes_emergency_once() -> None:
+    loader = FakeLoader()
+    loader.set_exception(TOKEN_BUCKET_SCRIPT, RedisTimeoutError("timeout"))
+    breaker = CircuitBreaker()
+    limiter = RateLimiter(
+        cast(ScriptLoader, loader),
+        breaker=breaker,
+        emergency=TokenBucketEmergencyLimiter(),
+    )
+    policy = _token_bucket_policy()
+    keys = (
+        build_anonymous_key(anonymous_cookie_identity("a" * 32), policy.endpoint_id, 1),
+        build_anonymous_key(anonymous_ip_identity("unknown"), policy.endpoint_id, 1),
+    )
+    decisions = await asyncio.gather(*(limiter.evaluate_anonymous(policy, keys) for _ in range(50)))
+    allowed, denied = _partition(decisions)
+    assert len(allowed) == 1
+    assert allowed[0].reason in {DecisionReason.REDIS_TIMEOUT, DecisionReason.CIRCUIT_OPEN}
+    assert len(denied) == 49
+    assert all(d.reason is DecisionReason.EMERGENCY_LOCAL_LIMIT for d in denied)
     assert breaker.state is BreakerState.OPEN

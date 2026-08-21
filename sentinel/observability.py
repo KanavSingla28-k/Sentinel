@@ -1,12 +1,15 @@
-"""Decision observability: structured deny logging and bounded metrics (Phase 12).
+"""Decision observability: structured deny logging and bounded metrics (Phases 12, 19).
 
-Structured deny logs carry tenant_hash (never the raw tenant id), endpoint_id,
-decision_reason, evaluation latency, and breaker state. Prometheus metrics are
-keyed only by endpoint_id and decision_reason — both bounded label sets:
-endpoint_id is an explicit configured id (ADR-009) and decision_reason is the
-closed DecisionReason enum. Collectors are process-wide by Prometheus semantics
-and are registered once on the default registry; tests inject a private
-registry through the constructor.
+Structured deny logs carry identity_mode (a bounded enum: tenant_jwt or
+anonymous), identity_hash (the sha256 hash of the rate-limit identity — the
+tenant id for tenant_jwt policies, the anonymous cookie/ip identity for
+anonymous policies; never the raw value), endpoint_id, decision_reason,
+evaluation latency, and breaker state. Prometheus metrics are keyed only by
+endpoint_id and decision_reason — both bounded label sets: endpoint_id is an
+explicit configured id (ADR-009) and decision_reason is the closed
+DecisionReason enum. Collectors are process-wide by Prometheus semantics and
+are registered once on the default registry; tests inject a private registry
+through the constructor.
 """
 
 import logging
@@ -14,7 +17,7 @@ import logging
 from prometheus_client import CollectorRegistry, Counter, Histogram
 
 from sentinel.circuit_breaker import BreakerState
-from sentinel.models import Decision
+from sentinel.models import Decision, IdentityMode
 
 _LOGGER_NAME = "sentinel"
 _LABELS = ("endpoint_id", "decision_reason")
@@ -58,7 +61,8 @@ class SentinelObservability:
 
     def record_decision(
         self,
-        tenant_hash: str,
+        identity_mode: IdentityMode,
+        identity_hash: str,
         endpoint_id: str,
         decision: Decision,
         latency_micro: int,
@@ -70,7 +74,8 @@ class SentinelObservability:
             self._logger.warning(
                 "rate limit decision denied",
                 extra={
-                    "tenant_hash": tenant_hash,
+                    "identity_mode": identity_mode.value,
+                    "identity_hash": identity_hash,
                     "endpoint_id": endpoint_id,
                     "decision_reason": decision.reason.value,
                     "latency_micro": latency_micro,
