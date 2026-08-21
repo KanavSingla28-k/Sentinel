@@ -50,6 +50,13 @@ configured id). Each endpoint declares how it must behave:
 This is a *library, not a service*: it runs inside your FastAPI process. There is no sidecar, no
 proxy, no deployment to manage — you install it, wire one dependency, and configure policies.
 
+**Anonymous endpoints too (Phase 19).** Unauthenticated routes (login, signup, password reset)
+have no JWT `sub` to key on. Sentinel mints a server-issued, HMAC-signed device cookie and
+combines it with the trusted-client IP (from `request.client` — forwarding headers are never
+read) into a dual-bucket decision: allowed only if both buckets allow. Identity hashes live in
+a separate `sentinel:v2:` keyspace with the same sha256 hygiene as tenant ids; denied requests
+never receive a cookie.
+
 ---
 
 ## Project structure
@@ -66,6 +73,7 @@ sentinel/                  the library (14 modules, ~500 lines total)
 ├── lua.py                  script registry
 ├── algorithms.py           pure-Python reference implementations
 ├── limiter.py              RateLimiter orchestration
+├── anonymous.py            anonymous identity: cookie mint/verify, client IP
 ├── errors.py               RedisError classification
 ├── circuit_breaker.py      per-process breaker (CLOSED/OPEN/HALF_OPEN)
 ├── emergency.py            fail-open emergency limiter
@@ -109,6 +117,9 @@ Three components carry the correctness story:
    `sentinel:v1:{sha256(tenant)}:{endpoint_id}:{policy_version}`. Raw tenant ids never reach
    Redis keys, logs, or metrics. Tenant identity comes **only** from a validated JWT `sub`
    claim — the `X-Tenant-ID` header is ignored (spoofing is a locked regression test).
+   Anonymous policies (Phase 19) key the same way in a separate `sentinel:v2:` keyspace with
+   `anon:cookie:*` / `anon:ip:*` identity strings — the client IP comes only from
+   `request.client`, never from `X-Forwarded-For` or any client-supplied header.
 
 State is a single Redis string per bucket, written with `SET` + `EXPIRE` only (no `DEL`, no
 `KEYS`/`SCAN`, no eviction):
@@ -142,6 +153,11 @@ One request to a guarded endpoint, in eight steps (`docs/architecture.md` §2 fo
 7. **Decision → HTTP** — allowed: handler runs; denied: 429 (rate limit, with `Retry-After`
    where computable) or 503 (store failures).
 8. **Observability** — every decision increments metrics; every denial emits a WARNING log.
+
+For anonymous policies the journey is the same minus the bearer token: a signed device cookie
+(verified, else minted) plus the trusted-client IP are evaluated as dual buckets — allowed only
+if both allow — and the minted cookie is delivered only on allowed requests
+(`guard.anonymous_guard_for(endpoint_id)`).
 
 ---
 
@@ -238,8 +254,8 @@ exactly (the fresh run's B8 counts confirm exactly one initial burst per rep). F
   - `sentinel_decisions_total` (counter)
   - `sentinel_evaluate_latency_microseconds` (histogram)
 - **Logs** — every denied decision emits a WARNING structured log (`logger name: sentinel`)
-  with `tenant_hash` (never the raw tenant), `endpoint_id`, `decision_reason`, `latency_micro`,
-  `breaker_state`.
+  with `identity_mode` + `identity_hash` (never the raw tenant id, client id, or IP),
+  `endpoint_id`, `decision_reason`, `latency_micro`, `breaker_state`.
 
 ---
 
@@ -261,6 +277,11 @@ production:
 - **JWT replay detection lives upstream** (short-lived tokens, mTLS, single-use).
 - **Sliding window is an estimate** (`current + previous × remaining/window`) and its denials
   carry no `Retry-After`; token-bucket denials do.
+- **Anonymous IP identity needs a trusted proxy** — Sentinel reads `request.client` only; if the
+  ASGI server is not resolving forwarding headers, all traffic collapses to one shared bucket
+  (over-blocking, never quota bypass). Non-IP/missing peers share the same bucket.
+- **Anonymous AND-semantics bind the IP bucket** — legitimate users behind a shared NAT IP share
+  that bucket with other users of the IP.
 
 ---
 

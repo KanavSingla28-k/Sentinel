@@ -1,13 +1,19 @@
-"""Static configuration loading for Sentinel (Phase 1)."""
+"""Static configuration loading for Sentinel (Phases 1 and 19)."""
 
 import json
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
-from sentinel.models import Policy
+from sentinel.models import IdentityMode, Policy
 
 _ALLOWED_JWT_ALGORITHMS = frozenset({"HS256", "HS384", "HS512"})
+
+_ANONYMOUS_COOKIE_NAME_PATTERN = r"^[a-zA-Z0-9_.-]+$"
+DEFAULT_ANONYMOUS_COOKIE_NAME = "sentinel_anon_id"
+DEFAULT_ANONYMOUS_COOKIE_TTL_SECONDS = 2_592_000  # 30 days
+MIN_ANONYMOUS_COOKIE_TTL_SECONDS = 3_600
+MAX_ANONYMOUS_COOKIE_TTL_SECONDS = 7_776_000  # 90 days
 
 
 class AppConfig(BaseModel):
@@ -16,6 +22,17 @@ class AppConfig(BaseModel):
     redis_url: str = Field(pattern=r"^redis://")
     jwt_secret: SecretStr = Field(min_length=32)
     jwt_algorithm_allowlist: frozenset[str]
+    anonymous_cookie_name: str = Field(
+        default=DEFAULT_ANONYMOUS_COOKIE_NAME,
+        pattern=_ANONYMOUS_COOKIE_NAME_PATTERN,
+    )
+    anonymous_cookie_ttl_seconds: int = Field(
+        default=DEFAULT_ANONYMOUS_COOKIE_TTL_SECONDS,
+        ge=MIN_ANONYMOUS_COOKIE_TTL_SECONDS,
+        le=MAX_ANONYMOUS_COOKIE_TTL_SECONDS,
+    )
+    anonymous_cookie_secure: bool = True
+    anonymous_cookie_secret: SecretStr | None = None
 
     @field_validator("jwt_algorithm_allowlist")
     @classmethod
@@ -45,7 +62,15 @@ class SentinelConfig(BaseModel):
                     f"policy dict key {endpoint_id!r} does not match "
                     f"Policy.endpoint_id {policy.endpoint_id!r}"
                 )
+        if self._has_anonymous_policy() and self.app.anonymous_cookie_secret is None:
+            raise ValueError(
+                "anonymous policies require app.anonymous_cookie_secret "
+                "(the HMAC key for anonymous client cookies)"
+            )
         return self
+
+    def _has_anonymous_policy(self) -> bool:
+        return any(policy.identity is IdentityMode.ANONYMOUS for policy in self.policies.values())
 
 
 def load_config(path: Path) -> SentinelConfig:

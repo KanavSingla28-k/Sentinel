@@ -9,6 +9,11 @@ from pydantic import ValidationError
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 from sentinel.algorithms import TOKENS_PER_TOKEN_MICRO
+from sentinel.anonymous import (
+    anonymous_cookie_identity,
+    anonymous_ip_identity,
+    hash_identity,
+)
 from sentinel.circuit_breaker import (
     FAILURE_THRESHOLD,
     OPEN_TIMEOUT_SECONDS,
@@ -24,6 +29,7 @@ from sentinel.limiter import (
     RateLimiter,
     SlidingWindowStrategy,
     TokenBucketStrategy,
+    build_anonymous_key,
     build_bucket_key,
 )
 from sentinel.models import AlgorithmType, DecisionReason, FailMode, Policy
@@ -112,6 +118,38 @@ def test_build_bucket_key_includes_policy_version() -> None:
     assert first != second
     assert first.endswith(":1")
     assert second.endswith(":2")
+
+
+def test_build_anonymous_key_exact_format() -> None:
+    identity = anonymous_ip_identity("203.0.113.9")
+    key = build_anonymous_key(identity, "auth.login", 1)
+    prefix, version, identity_hash, endpoint_id, policy_version = key.split(":")
+    assert prefix == "sentinel"
+    assert version == "v2"
+    assert len(identity_hash) == 64
+    assert identity_hash == hash_identity(identity)
+    assert endpoint_id == "auth.login"
+    assert policy_version == "1"
+    assert "203.0.113.9" not in key
+
+
+def test_build_anonymous_key_is_deterministic_and_scoped() -> None:
+    cookie_identity = anonymous_cookie_identity("a" * 32)
+    first = build_anonymous_key(cookie_identity, "auth.login", 1)
+    second = build_anonymous_key(cookie_identity, "auth.login", 1)
+    other_endpoint = build_anonymous_key(cookie_identity, "auth.signup", 1)
+    other_version = build_anonymous_key(cookie_identity, "auth.login", 2)
+    other_identity = build_anonymous_key(anonymous_cookie_identity("b" * 32), "auth.login", 1)
+    assert first == second
+    assert first != other_endpoint
+    assert first != other_version
+    assert first != other_identity
+
+
+def test_build_anonymous_key_distinct_from_tenant_keys() -> None:
+    anonymous = build_anonymous_key(anonymous_ip_identity("203.0.113.9"), "auth.login", 1)
+    tenant = build_bucket_key("203.0.113.9", "auth.login", 1)
+    assert anonymous != tenant
 
 
 async def test_token_bucket_allowed_mapping() -> None:
@@ -522,3 +560,69 @@ async def test_recovered_half_open_probe_success_closes_breaker() -> None:
 def test_unknown_algorithm_follows_enum_contract() -> None:
     with pytest.raises(ValidationError):
         _token_bucket_policy(algorithm="bogus")
+
+
+async def test_evaluate_anonymous_allows_only_when_all_buckets_allow() -> None:
+    loader = FakeLoader({"token_bucket": [1, 1_000_000, 1_700_000_000_000_000, 60]})
+    limiter = _limiter(loader)
+    decision = await limiter.evaluate_anonymous(
+        _token_bucket_policy(), ("sentinel:v2:a", "sentinel:v2:b")
+    )
+    assert decision.allowed is True
+    assert decision.reason is DecisionReason.ALLOWED
+    assert [call[1][0] for call in loader.calls] == ["sentinel:v2:a", "sentinel:v2:b"]
+
+
+async def test_evaluate_anonymous_first_denial_wins() -> None:
+    loader = FakeLoader({"token_bucket": [0, 0, 1_700_000_000_000_000, -1]})
+    limiter = _limiter(loader)
+    decision = await limiter.evaluate_anonymous(
+        _token_bucket_policy(), ("sentinel:v2:a", "sentinel:v2:b")
+    )
+    assert decision.allowed is False
+    assert decision.reason is DecisionReason.RATE_LIMITED
+    assert [call[1][0] for call in loader.calls] == ["sentinel:v2:a"]
+
+
+async def test_evaluate_anonymous_single_key() -> None:
+    loader = FakeLoader({"token_bucket": [1, 1_000_000, 1_700_000_000_000_000, 60]})
+    limiter = _limiter(loader)
+    decision = await limiter.evaluate_anonymous(_token_bucket_policy(), ("sentinel:v2:only",))
+    assert decision.allowed is True
+    assert len(loader.calls) == 1
+
+
+async def test_evaluate_anonymous_empty_keys_raise() -> None:
+    with pytest.raises(ValueError, match="at least one bucket key"):
+        await _limiter(FakeLoader({})).evaluate_anonymous(_token_bucket_policy(), ())
+
+
+async def test_evaluate_anonymous_failure_is_terminal_no_second_emergency_consumption() -> None:
+    loader = FakeLoader({})
+    loader.set_exception("token_bucket", RedisTimeoutError("timeout"))
+    limiter = _limiter(
+        loader,
+        emergency=TokenBucketEmergencyLimiter(),
+    )
+    policy = _token_bucket_policy(
+        fail_mode=FailMode.FAIL_OPEN, fallback_rate_per_process_micro=TOKENS_PER_TOKEN_MICRO
+    )
+    decision = await limiter.evaluate_anonymous(policy, ("sentinel:v2:a", "sentinel:v2:b"))
+    assert decision.allowed is True
+    assert decision.reason is DecisionReason.REDIS_TIMEOUT
+    assert len(loader.calls) == 1
+    breaker_limiter = _limiter(loader, breaker=_tripped_breaker())
+    decision = await breaker_limiter.evaluate_anonymous(policy, ("sentinel:v2:a", "sentinel:v2:b"))
+    assert decision.allowed is True
+    assert decision.reason is DecisionReason.CIRCUIT_OPEN
+    assert len(loader.calls) == 1
+
+
+async def test_evaluate_anonymous_fail_closed_denies_on_first_failure() -> None:
+    loader = FakeLoader({})
+    loader.set_exception("token_bucket", RedisTimeoutError("timeout"))
+    policy = _token_bucket_policy(fail_mode=FailMode.FAIL_CLOSED)
+    decision = await _limiter(loader).evaluate_anonymous(policy, ("sentinel:v2:a", "sentinel:v2:b"))
+    assert decision.allowed is False
+    assert decision.reason is DecisionReason.FAIL_CLOSED
+    assert len(loader.calls) == 1

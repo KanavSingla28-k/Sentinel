@@ -37,6 +37,10 @@ application (items 8–9).
 | 17 | In-process Python library for FastAPI (asyncio, Python ≥ 3.11) | Not a sidecar, no WSGI binding, no other-language SDK | `pyproject.toml`, project record §10 |
 | 18 | Metrics are process-wide on the default Prometheus registry | Multiple guards share collectors; labels bounded to `endpoint_id`/`decision_reason`; no tenant label | `sentinel/observability.py:20` |
 | 19 | Tenant ids are hashed, not encrypted | A SHA-256 hash is not a secret; keys/logs carry `tenant_hash`, never the raw id | `sentinel/limiter.py:37` |
+| 20 | Anonymous identity is a cookie + trusted-client IP | IP identity is only as trustworthy as the proxy's header resolution; never read from raw headers (SEC-ANON-01) | `sentinel/anonymous.py`, project record §07 |
+| 21 | Non-IP/missing peers collapse to one shared `unknown` bucket | All such traffic shares a single bucket (over-blocking, never quota bypass) — an operational warning is logged | `sentinel/anonymous.py:110` |
+| 22 | Anonymous cookie is not replayable-proof | A stolen cookie is usable from any IP (it is a bearer device cookie); IP bucket still caps the IP regardless | `sentinel/anonymous.py:136` |
+| 23 | Anonymous AND-semantics bind the IP bucket too | One user behind a shared NAT IP is limited by the IP bucket shared with other users of that IP | `sentinel/limiter.py:190` |
 
 ---
 
@@ -112,6 +116,9 @@ Resumint accepts limited overrun over blocked users.
 
 - **Auth failures never produce a `DecisionReason`** — 401s are not rate-limit decisions
   (`sentinel/http.py:110`); log/metrics tooling must not expect one.
+- **Anonymous denials are indistinguishable from tenant denials** — same 429/503 shape, no
+  `WWW-Authenticate`, no extra headers (SEC-ANON-05); clients cannot learn whether an endpoint
+  is anonymous.
 - **`endpoint_id` is explicit, never derived from the URL** — renaming a route does not create
   a new bucket (ADR-009); it also means the guard must be told the id at route definition.
 - **No `cost` parameter** — every request costs exactly one token; per-request weighted cost is

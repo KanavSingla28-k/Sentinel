@@ -107,3 +107,63 @@ def test_load_config_rejects_invalid_json(tmp_path: Path) -> None:
     config_path.write_text("{ not json", encoding="utf-8")
     with pytest.raises(json.JSONDecodeError):
         load_config(config_path)
+
+
+def test_policy_identity_defaults_to_tenant_jwt() -> None:
+    config = make_config()
+    assert config.policies["pdftalk.ingest"].identity.value == "tenant_jwt"
+
+
+def test_anonymous_policy_without_cookie_secret_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="anonymous_cookie_secret"):
+        make_config(
+            policies={"auth.login": _make_policy(endpoint_id="auth.login", identity="anonymous")}
+        )
+
+
+def test_anonymous_policy_with_cookie_secret_loads() -> None:
+    config = make_config(
+        app=_make_app(anonymous_cookie_secret="anon-secret-0123456789abcdef0123456789abcdef"),
+        policies={"auth.login": _make_policy(endpoint_id="auth.login", identity="anonymous")},
+    )
+    assert config.policies["auth.login"].identity.value == "anonymous"
+    assert (
+        config.app.anonymous_cookie_secret.get_secret_value()
+        == "anon-secret-0123456789abcdef0123456789abcdef"
+    )
+
+
+def test_cookie_secret_without_anonymous_policy_is_allowed() -> None:
+    config = make_config(
+        app=_make_app(anonymous_cookie_secret="anon-secret-0123456789abcdef0123456789abcdef"),
+    )
+    assert config.policies["pdftalk.ingest"].identity.value == "tenant_jwt"
+
+
+def test_anonymous_cookie_defaults() -> None:
+    config = make_config(
+        app=_make_app(anonymous_cookie_secret="anon-secret-0123456789abcdef0123456789abcdef"),
+        policies={"auth.login": _make_policy(endpoint_id="auth.login", identity="anonymous")},
+    )
+    assert config.app.anonymous_cookie_name == "sentinel_anon_id"
+    assert config.app.anonymous_cookie_ttl_seconds == 2_592_000
+    assert config.app.anonymous_cookie_secure is True
+
+
+def test_anonymous_cookie_ttl_bounds() -> None:
+    for ttl in (0, 60, 8_000_000):
+        with pytest.raises(ValidationError):
+            make_config(app=_make_app(anonymous_cookie_ttl_seconds=ttl))
+
+
+def test_anonymous_cookie_name_pattern() -> None:
+    with pytest.raises(ValidationError):
+        make_config(app=_make_app(anonymous_cookie_name="bad name!"))
+
+
+def test_anonymous_identity_enum_rejects_unknown_values() -> None:
+    with pytest.raises(ValidationError):
+        make_config(
+            app=_make_app(anonymous_cookie_secret="anon-secret-0123456789abcdef0123456789abcdef"),
+            policies={"auth.login": _make_policy(endpoint_id="auth.login", identity="jwt")},
+        )
