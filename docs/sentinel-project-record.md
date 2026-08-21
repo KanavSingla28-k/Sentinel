@@ -1,10 +1,10 @@
 # SENTINEL — Project Record
 
-*Distributed Rate Limiter — Full Project Record*
+_Distributed Rate Limiter — Full Project Record_
 
 Application-layer rate limiting for multi-tenant APIs, built on FastAPI and Redis. This document is the complete record: the problem, three rounds of adversarial review, the architecture, and the frozen V1 specification — everything needed to understand the project without reading anything else.
 
-**Feasibility: 8.5–9 / 10**  ·  **Status: V1 spec frozen**  ·  **Stack: FastAPI · Redis · Lua**
+**Feasibility: 8.5–9 / 10** · **Status: V1 spec frozen** · **Stack: FastAPI · Redis · Lua**
 
 ---
 
@@ -30,7 +30,7 @@ Edge and CDN rate limiting stops blunt volumetric abuse — too many requests fr
 
 Sentinel sits one layer up: an application-layer limiter that understands tenants, endpoints, and policies — not just IP addresses. It's a small FastAPI + Redis library, consumed by two real applications with different traffic shapes and different tolerance for downtime: **PDFTalk**, a document-ingestion service, and **Resumint**, an AI-assisted resume tool.
 
-The interesting part was never the algorithm on a whiteboard — token buckets and sliding windows are textbook. The hard part is making either of them *correct* across N stateless API instances that all share one Redis as the single source of truth, while the clock, the network, and Redis itself can each fail independently, and while someone is actively looking for the seam between "the limiter said no" and "the state actually changed."
+The interesting part was never the algorithm on a whiteboard — token buckets and sliding windows are textbook. The hard part is making either of them _correct_ across N stateless API instances that all share one Redis as the single source of truth, while the clock, the network, and Redis itself can each fail independently, and while someone is actively looking for the seam between "the limiter said no" and "the state actually changed."
 
 > This document is about that second problem — not "how do you rate limit," but "how do you rate limit correctly, under failure, when someone is trying to break it."
 
@@ -41,13 +41,13 @@ The interesting part was never the algorithm on a whiteboard — token buckets a
 The spec didn't go from whiteboard to code. It went through three review passes, each one explicitly trying to break the previous version rather than approve it — followed by a resolution pass that turned every open flag into one decision.
 
 ![Fig 1](./assets/fig1.svg)
-*FIG. 1 — spec hardening across four review stages*
+_FIG. 1 — spec hardening across four review stages_
 
 **V1 spec.** Strong scope discipline (no Kafka, no Kubernetes, no Redis Cluster, no dynamic policy) and a sound FastAPI + Redis + Lua architecture — but it implicitly trusted application clocks, stated an approximate algorithm's behavior as exact, and left Redis-failure semantics undefined.
 
 **Review 1 — correctness pass.** Found that the design's claims outran what the implementation could actually guarantee: clock skew across instances could break the token bucket, the sliding-window counter's "no boundary-burst exploit" claim wasn't strictly true, the concurrency test (`allowed == limit`) couldn't work for either algorithm, Redis timeout semantics were undefined, and the memory estimate was optimistic.
 
-**Review 2 — attacker-economics pass.** Reframed the goal from *correct under normal operation* to *boring under adversarial and degraded operation*. Found that unvalidated Lua inputs could mint free tokens, that a shared Redis with LRU eviction could reset quotas for free, and that tenant-identity and circuit-breaker seams were exploitable.
+**Review 2 — attacker-economics pass.** Reframed the goal from _correct under normal operation_ to _boring under adversarial and degraded operation_. Found that unvalidated Lua inputs could mint free tokens, that a shared Redis with LRU eviction could reset quotas for free, and that tenant-identity and circuit-breaker seams were exploitable.
 
 **Review 3 — resolution pass.** Treated Review 2 as the new baseline and closed every remaining open question to a single decision, while explicitly refusing to let the review cycle keep adding scope: `cost` dropped from V1 entirely, the emergency limiter stays deliberately dumb, and the time-source testing problem got solved without forking the production script.
 
@@ -60,7 +60,7 @@ The spec didn't go from whiteboard to code. It went through three review passes,
 One request, six stages. Each stage is independently testable — the Policy Resolver doesn't need a live Redis to test, and the Rate Limiter doesn't need a live FastAPI app.
 
 ![Fig 2](./assets/fig2.svg)
-*FIG. 2 — the six-stage request pipeline*
+_FIG. 2 — the six-stage request pipeline_
 
 The three middle stages are deliberately separate objects: **PolicyResolver** (tenant → policy), **RateLimiter** (algorithm selection and invocation), and the FastAPI middleware that wires them together. Each is unit-testable without the others — the resolver against a mock config source, the limiter against a real or fake Redis, the middleware against both as black boxes.
 
@@ -73,7 +73,7 @@ The three middle stages are deliberately separate objects: **PolicyResolver** (t
 State is stored as **integer microtokens** (`tokens_micro`, `rate_micro`), not floats — this removes float-drift ambiguity from the correctness tests at effectively zero implementation cost. Time comes from `redis.call("TIME")` inside the Lua script, always, which is what makes the bucket consistent across every API instance regardless of each instance's own clock.
 
 ![Fig 3](./assets/fig3.svg)
-*FIG. 3 — token bucket fill states*
+_FIG. 3 — token bucket fill states_
 
 > **Invariant:** Accepted requests can never consume more tokens than the bucket contained at the decision timestamp.
 
@@ -94,7 +94,7 @@ estimated_count = current_count + previous_count × (remaining_window / window_s
 One key format, kept deliberately boring:
 
 ![Fig 4](./assets/fig4.svg)
-*FIG. 4 — `sentinel:v1:{tenant_hash}:{endpoint_id}:{policy_version}`*
+_FIG. 4 — `sentinel:v1:{tenant_hash}:{endpoint_id}:{policy_version}`_
 
 **No hash tags, no per-tenant hash consolidation, in V1.** Both ideas are real — hash tags would future-proof a move to Redis Cluster, and consolidating a tenant's keys into one Redis hash would cut per-key overhead — but neither is worth adopting on theory. Benchmark the simple per-key format at 100K / 1M / 5M tenants first; treat consolidation as a documented follow-up if memory actually becomes a constraint, not a day-one assumption.
 
@@ -107,15 +107,15 @@ One key format, kept deliberately boring:
 Fail-open never means unlimited, and fail-closed is a documented tradeoff, not an accident.
 
 ![Fig 5](./assets/fig5.svg)
-*FIG. 5 — Redis failure decision tree*
+_FIG. 5 — Redis failure decision tree_
 
-| Redis outcome | Fail-open (Resumint) | Fail-closed (PDFTalk) |
-|---|---|---|
-| Success | Use Lua result | Use Lua result |
-| Timeout (20ms) | Emergency local limiter | Deny, HTTP 503 |
-| Connection error | Emergency local limiter | Deny, HTTP 503 |
-| `NOSCRIPT` | Re-EVAL once, then treat as timeout | Re-EVAL once, then treat as timeout |
-| Circuit breaker OPEN | Emergency local limiter | Deny, HTTP 503 |
+| Redis outcome        | Fail-open (Resumint)                | Fail-closed (PDFTalk)               |
+| -------------------- | ----------------------------------- | ----------------------------------- |
+| Success              | Use Lua result                      | Use Lua result                      |
+| Timeout (20ms)       | Emergency local limiter             | Deny, HTTP 503                      |
+| Connection error     | Emergency local limiter             | Deny, HTTP 503                      |
+| `NOSCRIPT`           | Re-EVAL once, then treat as timeout | Re-EVAL once, then treat as timeout |
+| Circuit breaker OPEN | Emergency local limiter             | Deny, HTTP 503                      |
 
 Every row logs a bounded `decision_reason` enum — the difference between an answerable incident review and log forensics.
 
@@ -129,16 +129,16 @@ Every row logs a bounded `decision_reason` enum — the difference between an an
 
 Everything below was found in review, not assumed away.
 
-| Attack / risk | Found in | Resolution |
-|---|---|---|
-| Negative-cost token minting | Review 2 | `cost` removed from V1 entirely — no client-reachable numeric input |
-| Eviction-as-bypass (free quota reset) | Review 2 | Dedicated Redis, `noeviction`, TTL-only expiry |
-| Tenant identity spoofing via headers | Review 2 | Tenant id from validated JWT claim only, no header fallback anywhere |
-| JWT replay | Review 2 | Named as accepted threat; mitigation lives upstream (short-lived tokens, mTLS) |
-| Circuit-breaker instance targeting | Review 2 / 3 | Breaker stays per-process; damage capped by emergency limiter regardless of instance hit |
-| Redis Cluster migration cost | Review 2 | Deliberately deferred to V2 — not fixed now, decided not needed yet |
-| Float drift in long-lived buckets | Review 3 | Integer microtokens adopted |
-| Metrics cardinality bomb | Review 2 | `endpoint_id` always an explicit configured id, never a raw path |
+| Attack / risk                         | Found in     | Resolution                                                                               |
+| ------------------------------------- | ------------ | ---------------------------------------------------------------------------------------- |
+| Negative-cost token minting           | Review 2     | `cost` removed from V1 entirely — no client-reachable numeric input                      |
+| Eviction-as-bypass (free quota reset) | Review 2     | Dedicated Redis, `noeviction`, TTL-only expiry                                           |
+| Tenant identity spoofing via headers  | Review 2     | Tenant id from validated JWT claim only, no header fallback anywhere                     |
+| JWT replay                            | Review 2     | Named as accepted threat; mitigation lives upstream (short-lived tokens, mTLS)           |
+| Circuit-breaker instance targeting    | Review 2 / 3 | Breaker stays per-process; damage capped by emergency limiter regardless of instance hit |
+| Redis Cluster migration cost          | Review 2     | Deliberately deferred to V2 — not fixed now, decided not needed yet                      |
+| Float drift in long-lived buckets     | Review 3     | Integer microtokens adopted                                                              |
+| Metrics cardinality bomb              | Review 2     | `endpoint_id` always an explicit configured id, never a raw path                         |
 
 ### Phase 12 observability verification (SEC-08 live assertion)
 
@@ -167,11 +167,11 @@ at the issuing service.
 
 Same library, different semantics — proof that Sentinel isn't a generic drop-in, it's policy shaped by what the endpoint actually does.
 
-**PDFTalk** — *Sliding window · Fail closed*
+**PDFTalk** — _Sliding window · Fail closed_
 Document ingestion is expensive compute. A Redis outage takes PDFTalk down rather than risk unmetered ingestion load — abuse protection outranks availability here.
 Endpoint id: `pdftalk.ingest`
 
-**Resumint** — *Token bucket · Fail open*
+**Resumint** — _Token bucket · Fail open_
 Blocking paying users over a Redis blip is bad UX, so Resumint fails open — but never unlimited. The emergency limiter caps blast radius during any outage.
 Endpoint id: `resumint.tailor`
 
@@ -184,7 +184,7 @@ Both use explicit logical endpoint ids, never raw URLs — renaming `POST /inges
 Three questions kept deliberately separate, so none of them can substitute for another.
 
 ![Fig 6](./assets/fig6.svg)
-*FIG. 6 — correctness and concurrency tests feed the performance benchmark, not the other way around*
+_FIG. 6 — correctness and concurrency tests feed the performance benchmark, not the other way around_
 
 Four invariants, tested aggressively rather than formally proven — enough to defend in an interview, enough to trust in production:
 
@@ -250,15 +250,16 @@ within noise of the baseline; B8/B9 failure-path p99 ≈ 26 ms unchanged).
 
 Feasible, and no longer theoretically feasible — every P0 issue found across three reviews has one resolved answer in this document.
 
-| Phase | Estimate |
-|---|---|
-| Core implementation | 1–2 weeks |
-| Testing & benchmarking | 3–7 days |
-| Integration & documentation | 2–4 days |
+| Phase                       | Estimate  |
+| --------------------------- | --------- |
+| Core implementation         | 1–2 weeks |
+| Testing & benchmarking      | 3–7 days  |
+| Integration & documentation | 2–4 days  |
 
-> **Status.** Implementation phases 0–15 complete. Phase 11 (PR #12) locked in every §07 finding
+> **Status.** Implementation phases 0–19 complete. Phase 11 (PR #12) locked in every §07 finding
 > with a `security`-marked regression test or an explicit documented boundary; Phase 12 shipped
-> structured deny logging (`tenant_hash`, reason, latency, breaker state) and bounded
+> structured identity-aware deny logging (`identity_mode`, `identity_hash`, reason, latency,
+> breaker state) and bounded
 > `endpoint_id`/`decision_reason` Prometheus metrics, plus the live SEC-08 cardinality assertion;
 > Phase 13 proved the §09 invariants under concurrency and real failure injection (`slow` suite,
 > dedicated CI job); Phase 14 delivered the benchmark harness and baseline
@@ -278,24 +279,28 @@ Feasible, and no longer theoretically feasible — every P0 issue found across t
 > auth, Lua script reload after Redis restart, observability) passed against the vendored
 > `sentinel-0.1.0` wheel; no genuine Sentinel defects surfaced (two pre-existing PDFTalk-side
 > issues recorded there: 500 on non-UUID `sub`, structlog dropping `extra` fields).
+> Phase 19 (v1.2.0) added anonymous endpoint protection with signed cookie and trusted-client IP
+> dual buckets, strict anonymous configuration, identity-aware observability, and regression
+> coverage for cookie signing, forwarding-header rejection, AND semantics, and failure paths.
 > Phase 18 (production readiness review & v1.0.0, PR #18) ran the full gate suite green on real
 > Redis (374 tests, 100% coverage, mypy/ruff/pre-commit, benchmark smoke), walked the
 > known-limitations list with no blocking findings, bumped the version to 1.0.0, and tagged
 > `v1.0.0`.
-> **Post-release (PRs #19–#20):** the `v1.0.0` PyPI publish never landed (tag-time run failed on
+> **Historical post-release record (PRs #19–#20):** the `v1.0.0` PyPI publish never landed (tag-time run failed on
 > a missing `PYPI_TOKEN`; by the time the secret existed, the name `sentinel` was already taken
 > on PyPI by an unrelated package). The distribution was renamed to `sentinel-rate-limiter`
-> (import name `sentinel` unchanged) and the live release shipped as `sentinel-rate-limiter
-> 1.0.1` — verified on PyPI with correct metadata, wheel + sdist, fresh-venv installable. The
+> (import name `sentinel` unchanged) and the live release shipped as `sentinel-rate-limiter`
+> `1.0.1` — verified on PyPI with correct metadata, wheel + sdist, fresh-venv installable. The
 > wheel contents were verified clean against the packaging decision (only `sentinel/*.py` +
-> `py.typed` + `lua/*.lua` + dist-info; no tests/benchmarks/examples/docs leaks). Version is now
-> `1.1.0.dev0` (post-release dev bump); `v1.0.0` + `v1.0.1` GitHub Releases exist, v1.0.0's
-> notes disclosing its never-published status.
-> Next: post-V1 — the release is out; remaining items are the deferred V2 boundaries (JWKS,
-> Redis Cluster) from `docs/known-limitations.md`.
+> `py.typed` + `lua/*.lua` + dist-info; no tests/benchmarks/examples/docs leaks). That historical
+> release line is superseded by v1.2.0, which is the current version in `pyproject.toml` and
+> `sentinel.__version__`.
 
-> **Next.** Not another document. Build V1 against this spec, then kill Redis mid-traffic and run concurrent requests across 3 instances — the real adversarial test is load, not a fourth review.
+> **v1.2.0 status.** Phase 19 is implemented and documented: anonymous endpoints use a signed
+> client cookie plus trusted-client IP dual buckets, strict anonymous-cookie configuration, and
+> AND semantics. The current repository contains 375 collected tests; the remaining deferred V2
+> boundaries are listed in `docs/known-limitations.md`.
 
 ---
 
-*SENTINEL — PROJECT RECORD · V1 SPEC FROZEN*
+_SENTINEL — PROJECT RECORD · V1 SPEC FROZEN_

@@ -1,5 +1,9 @@
 # Configuration
 
+This page documents the **v1.2.0** configuration surface. The release is backward compatible:
+policies default to `identity: "tenant_jwt"`; add `identity: "anonymous"` only to endpoints
+that should accept unauthenticated requests.
+
 Sentinel loads a single strict JSON configuration file. `SentinelConfig` is frozen and
 rejects unknown keys; every policy must be keyed by (and declare) its explicit `endpoint_id`,
 and per-algorithm field mixing is rejected at load. A working example ships in the repo at
@@ -51,15 +55,15 @@ and per-algorithm field mixing is rejected at load. A working example ships in t
 
 Deployment-level settings, validated by `AppConfig`:
 
-| Field | What it controls | Default | Constraints |
-|---|---|---|---|
-| `redis_url` | URL of the dedicated Redis instance the guard connects to | — (required) | Must start with `redis://` |
-| `jwt_secret` | Shared HMAC secret used to verify incoming bearer tokens | — (required) | Minimum 32 characters |
-| `jwt_algorithm_allowlist` | JWT algorithms accepted for verification | — (required) | Non-empty subset of `HS256`, `HS384`, `HS512`. Asymmetric keys and JWKS are rejected at load (deferred to V2) |
-| `anonymous_cookie_secret` | HMAC secret that signs anonymous client cookies | — (required iff any policy has `identity: "anonymous"`) | Minimum 32 characters; rejected at load if an anonymous policy exists without it |
-| `anonymous_cookie_name` | Cookie name carrying the anonymous client id | `sentinel_anon_id` | Pattern `^[a-zA-Z0-9_.-]+$` |
-| `anonymous_cookie_ttl_seconds` | Cookie lifetime before re-issuance | `2592000` (30 days) | 3600 ≤ value ≤ 7776000 |
-| `anonymous_cookie_secure` | `Secure` flag on the anonymous cookie | `true` | Set `false` only for local HTTP development |
+| Field                          | What it controls                                          | Default                                                 | Constraints                                                                                                   |
+| ------------------------------ | --------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `redis_url`                    | URL of the dedicated Redis instance the guard connects to | — (required)                                            | Must start with `redis://`                                                                                    |
+| `jwt_secret`                   | Shared HMAC secret used to verify incoming bearer tokens  | — (required)                                            | Minimum 32 characters                                                                                         |
+| `jwt_algorithm_allowlist`      | JWT algorithms accepted for verification                  | — (required)                                            | Non-empty subset of `HS256`, `HS384`, `HS512`. Asymmetric keys and JWKS are rejected at load (deferred to V2) |
+| `anonymous_cookie_secret`      | HMAC secret that signs anonymous client cookies           | — (required iff any policy has `identity: "anonymous"`) | Minimum 32 characters; rejected at load if an anonymous policy exists without it                              |
+| `anonymous_cookie_name`        | Cookie name carrying the anonymous client id              | `sentinel_anon_id`                                      | Pattern `^[a-zA-Z0-9_.-]+$`                                                                                   |
+| `anonymous_cookie_ttl_seconds` | Cookie lifetime before re-issuance                        | `2592000` (30 days)                                     | 3600 ≤ value ≤ 7776000                                                                                        |
+| `anonymous_cookie_secure`      | `Secure` flag on the anonymous cookie                     | `true`                                                  | Set `false` only for local HTTP development                                                                   |
 
 `jwt_secret` is treated as a secret value throughout; the algorithm allowlist exists because
 the token's `alg` header alone is not trustworthy. `anonymous_cookie_secret` is a **separate,
@@ -72,20 +76,20 @@ A map of `endpoint_id → Policy`. Each policy is keyed by (and must declare) an
 `endpoint_id` — the id is **never** derived from the URL path (renaming a route does not create
 a new bucket). Common fields:
 
-| Field | What it controls | Default | Constraints |
-|---|---|---|---|
-| `endpoint_id` | The explicit configured id used by `guard_for(...)` and in the Redis key | — (required) | Pattern `^[a-z0-9._-]+$` |
-| `algorithm` | Which rate-limit algorithm to use | — (required) | `token_bucket` or `sliding_window` |
-| `fail_mode` | Behavior when the Redis store fails | — (required) | `fail_closed` (503 on store failure) or `fail_open` (capped in-process emergency limiter). See [Failure Semantics](failure-semantics.md) |
-| `fallback_rate_per_process_micro` | Fail-open allowance per process, in µtokens/s | — (required) | ≥ 1. The emergency limiter's capacity and refill rate are both this value: a burst of one second's worth, then sustained. N instances can admit up to N × this rate |
-| `policy_version` | Version stamp that is part of the Redis key | — (required) | ≥ 1. Bump deliberately when a policy changes — it names a new bucket |
-| `identity` | Identity source for this endpoint's buckets | `tenant_jwt` | `tenant_jwt` (default; bearer-token `sub`) or `anonymous` (signed client cookie + trusted-client IP; requires `app.anonymous_cookie_secret`) |
+| Field                             | What it controls                                                         | Default      | Constraints                                                                                                                                                         |
+| --------------------------------- | ------------------------------------------------------------------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `endpoint_id`                     | The explicit configured id used by `guard_for(...)` and in the Redis key | — (required) | Pattern `^[a-z0-9._-]+$`                                                                                                                                            |
+| `algorithm`                       | Which rate-limit algorithm to use                                        | — (required) | `token_bucket` or `sliding_window`                                                                                                                                  |
+| `fail_mode`                       | Behavior when the Redis store fails                                      | — (required) | `fail_closed` (503 on store failure) or `fail_open` (capped in-process emergency limiter). See [Failure Semantics](failure-semantics.md)                            |
+| `fallback_rate_per_process_micro` | Fail-open allowance per process, in µtokens/s                            | — (required) | ≥ 1. The emergency limiter's capacity and refill rate are both this value: a burst of one second's worth, then sustained. N instances can admit up to N × this rate |
+| `policy_version`                  | Version stamp that is part of the Redis key                              | — (required) | ≥ 1. Bump deliberately when a policy changes — it names a new bucket                                                                                                |
+| `identity`                        | Identity source for this endpoint's buckets                              | `tenant_jwt` | `tenant_jwt` (default; bearer-token `sub`) or `anonymous` (signed client cookie + trusted-client IP; requires `app.anonymous_cookie_secret`)                        |
 
 An `identity: "anonymous"` policy is wired with `guard.anonymous_guard_for(endpoint_id)`
 instead of `guard_for(...)`; using the wrong factory raises at route registration. Identity is
 per-endpoint: tenant and anonymous policies can coexist in one config.
 
-### Anonymous identity (Phase 19)
+### Anonymous identity (v1.2.0, Phase 19)
 
 Unauthenticated endpoints key on two buckets, AND-combined (allowed only if both allow):
 
@@ -101,17 +105,17 @@ keyspace; raw client ids and IPs never reach Redis keys, logs, or metrics.
 
 ### Token-bucket fields (`algorithm: "token_bucket"`)
 
-| Field | What it controls | Default | Constraints |
-|---|---|---|---|
-| `capacity_micro` | Burst size — the maximum tokens the bucket can hold | — (required) | ≥ 1,000,000 (one token = 1,000,000 µtokens); ≤ 2^30 (Lua integer exactness) |
-| `refill_rate_micro_per_sec` | Sustained refill rate in µtokens per second | — (required) | ≥ 0; ≤ 2^30 (Lua integer exactness). `0` = a fixed-capacity bucket with no refill |
+| Field                       | What it controls                                    | Default      | Constraints                                                                       |
+| --------------------------- | --------------------------------------------------- | ------------ | --------------------------------------------------------------------------------- |
+| `capacity_micro`            | Burst size — the maximum tokens the bucket can hold | — (required) | ≥ 1,000,000 (one token = 1,000,000 µtokens); ≤ 2^30 (Lua integer exactness)       |
+| `refill_rate_micro_per_sec` | Sustained refill rate in µtokens per second         | — (required) | ≥ 0; ≤ 2^30 (Lua integer exactness). `0` = a fixed-capacity bucket with no refill |
 
 ### Sliding-window fields (`algorithm: "sliding_window"`)
 
-| Field | What it controls | Default | Constraints |
-|---|---|---|---|
-| `limit` | Maximum requests admitted per window | — (required) | ≥ 1; `limit × window_size_micro` ≤ 2^52 (Lua integer exactness) |
-| `window_size_micro` | The window duration in microseconds | `60000000` (60 s) | ≥ 1,000 (1 ms) |
+| Field               | What it controls                     | Default           | Constraints                                                     |
+| ------------------- | ------------------------------------ | ----------------- | --------------------------------------------------------------- |
+| `limit`             | Maximum requests admitted per window | — (required)      | ≥ 1; `limit × window_size_micro` ≤ 2^52 (Lua integer exactness) |
+| `window_size_micro` | The window duration in microseconds  | `60000000` (60 s) | ≥ 1,000 (1 ms)                                                  |
 
 ### Per-algorithm rejection
 
@@ -128,10 +132,10 @@ The two algorithm families are mutually exclusive — mixing them is rejected at
 All rate values are **microtokens** (1 token = 1,000,000 µtokens). Integer math only — no
 floats anywhere in the state. Examples:
 
-| Value | Plain meaning |
-|---|---|
-| `capacity_micro: 10000000` | 10 tokens of burst capacity |
-| `refill_rate_micro_per_sec: 10000` | 0.01 tokens per second |
+| Value                                   | Plain meaning                                     |
+| --------------------------------------- | ------------------------------------------------- |
+| `capacity_micro: 10000000`              | 10 tokens of burst capacity                       |
+| `refill_rate_micro_per_sec: 10000`      | 0.01 tokens per second                            |
 | `fallback_rate_per_process_micro: 2000` | emergency allowance of 0.002 tokens/s per process |
 
 ## Validation rules (summary)

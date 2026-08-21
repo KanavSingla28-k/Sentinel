@@ -1,5 +1,8 @@
 # Usage
 
+The examples below apply to v1.2.0, which supports both the default tenant/JWT identity and
+anonymous cookie/IP policies.
+
 This page shows how an application actually uses Sentinel, from first import to a guarded
 endpoint. It assumes you have installed the package and set up Redis
 (see [Installation](installation.md) and [Quick Start](quickstart.md)).
@@ -51,13 +54,13 @@ app = FastAPI(lifespan=lifespan)
 
 What each piece does:
 
-| Piece | Role |
-|---|---|
-| `load_config(Path("sentinel.json"))` | Parses + validates the config; unknown keys, mismatched policy keys, or per-algorithm field mixes are immediate, loud errors |
-| `SentinelRedis(url)` | Client pool with a **20 ms fail-fast budget**; runs the `noeviction` + bounded-`maxmemory` startup check and raises if Redis is misconfigured |
-| `ScriptLoader(redis.client)` | Loads and executes the Lua scripts, with NOSCRIPT auto-recovery |
-| `SentinelGuard(config, redis, loader)` | The FastAPI integration; explicit dependencies, no hidden singletons |
-| `await guard.load_scripts()` in `lifespan` | **Required** before the first request — forget it and the app raises on startup |
+| Piece                                      | Role                                                                                                                                          |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `load_config(Path("sentinel.json"))`       | Parses + validates the config; unknown keys, mismatched policy keys, or per-algorithm field mixes are immediate, loud errors                  |
+| `SentinelRedis(url)`                       | Client pool with a **20 ms fail-fast budget**; runs the `noeviction` + bounded-`maxmemory` startup check and raises if Redis is misconfigured |
+| `ScriptLoader(redis.client)`               | Loads and executes the Lua scripts, with NOSCRIPT auto-recovery                                                                               |
+| `SentinelGuard(config, redis, loader)`     | The FastAPI integration; explicit dependencies, no hidden singletons                                                                          |
+| `await guard.load_scripts()` in `lifespan` | **Required** before the first request — forget it and the app raises on startup                                                               |
 
 ## 2 · Configure rate limiting
 
@@ -69,7 +72,9 @@ Rate limits are static, per-endpoint policies in the JSON config — see
   "app": {
     "redis_url": "redis://localhost:6379/0",
     "jwt_secret": "dev-only-secret-change-me-0123456789abcdef",
-    "jwt_algorithm_allowlist": ["HS256"]
+    "jwt_algorithm_allowlist": ["HS256"],
+    "anonymous_cookie_secret": "anon-dev-only-secret-change-me-0123456789abcdef",
+    "anonymous_cookie_secure": false
   },
   "policies": {
     "resumint.tailor": {
@@ -105,20 +110,26 @@ passing their own `endpoint_id`; a guarded endpoint without a matching policy re
 
 ### What clients must send
 
-`Authorization: Bearer <JWT>` where the JWT is signed with an allowlisted HS* algorithm and
+`Authorization: Bearer <JWT>` where the JWT is signed with an allowlisted HS\* algorithm and
 carries both `exp` and `sub`. The `sub` claim is the tenant identity — everything is keyed on
 it. The `X-Tenant-ID` header is ignored (deliberately; spoofing is a locked regression test).
+
+Anonymous routes use `Depends(guard.anonymous_guard_for("endpoint_id"))` instead. They do not
+require a bearer token. Sentinel uses a signed, HttpOnly cookie when available and the ASGI
+peer address from `request.client.host`; forwarding headers are never consulted. Cookie and IP
+buckets are evaluated with AND semantics, and a new cookie is delivered only after an allowed
+request.
 
 ## 4 · What happens when the limit is exceeded
 
 Denied requests never reach your handler; the guard raises an `HTTPException` before it:
 
-| Situation | Status | Body | Headers |
-|---|---|---|---|
-| Rate limit exceeded (token bucket or emergency cap) | 429 | `{"detail": "rate limit exceeded"}` | `Retry-After` when computable |
-| Store failure on a fail-closed endpoint | 503 | `{"detail": "rate limiter unavailable"}` | — |
-| Missing/invalid token | 401 | `{"detail": "authentication required"}` | `WWW-Authenticate: Bearer` |
-| Unknown `endpoint_id` | 404 | `{"detail": "unknown endpoint"}` | — |
+| Situation                                           | Status | Body                                     | Headers                       |
+| --------------------------------------------------- | ------ | ---------------------------------------- | ----------------------------- |
+| Rate limit exceeded (token bucket or emergency cap) | 429    | `{"detail": "rate limit exceeded"}`      | `Retry-After` when computable |
+| Store failure on a fail-closed endpoint             | 503    | `{"detail": "rate limiter unavailable"}` | —                             |
+| Missing/invalid token                               | 401    | `{"detail": "authentication required"}`  | `WWW-Authenticate: Bearer`    |
+| Unknown `endpoint_id`                               | 404    | `{"detail": "unknown endpoint"}`         | —                             |
 
 Notes:
 

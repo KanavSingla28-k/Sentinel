@@ -1,9 +1,12 @@
 # Sentinel
 
+**Current release: v1.2.0.** This release adds anonymous endpoint protection using a signed
+client cookie plus a trusted-client IP bucket, with strict configuration and AND semantics.
+
 **Application-aware, tenant-aware, distributed rate limiting for FastAPI** — backed by a single
 dedicated Redis instance and atomic Lua scripts.
 
-Sentinel sits one layer above edge/CDN limiters: it understands *tenants* and *endpoints*, not
+Sentinel sits one layer above edge/CDN limiters: it understands _tenants_ and _endpoints_, not
 just IPs. Every endpoint gets its own algorithm (token bucket or sliding window), its own
 capacity and rate, and — crucially — its own **failure semantics**: an endpoint that must never
 overrun (expensive OCR compute) fails closed; an endpoint that must never block paying users
@@ -24,10 +27,10 @@ fire from hundreds of IPs and bypass IP-based limits entirely.
 Sentinel rates per **tenant** (a validated JWT `sub` claim) and per **endpoint** (an explicit
 configured id). Each endpoint declares how it must behave:
 
-| Service | Endpoint | Algorithm | Fail mode | Why |
-|---|---|---|---|---|
-| PDFTalk | `pdftalk.ingest` | sliding window | fail closed | OCR compute is expensive; a Redis failure must stop traffic (503), not unmetered jobs |
-| Resumint | `resumint.tailor` | token bucket | fail open | UX-sensitive; a Redis failure must not block users, but the emergency limiter caps the overrun |
+| Service  | Endpoint          | Algorithm      | Fail mode   | Why                                                                                            |
+| -------- | ----------------- | -------------- | ----------- | ---------------------------------------------------------------------------------------------- |
+| PDFTalk  | `pdftalk.ingest`  | sliding window | fail closed | OCR compute is expensive; a Redis failure must stop traffic (503), not unmetered jobs          |
+| Resumint | `resumint.tailor` | token bucket   | fail open   | UX-sensitive; a Redis failure must not block users, but the emergency limiter caps the overrun |
 
 ---
 
@@ -45,7 +48,7 @@ configured id). Each endpoint declares how it must behave:
   wait beyond a 20 ms budget.
 - **Observable out of the box** — two bounded Prometheus metrics and structured WARNING logs on
   every denial.
-- **Proven correctness** — 374 tests including 50-coroutine races, 3-process shared-bucket
+- **Proven correctness** — 375 collected tests including 50-coroutine races, 3-process shared-bucket
   atomicity, and real failure injection; 100% coverage on `sentinel/`.
 
 ---
@@ -62,7 +65,8 @@ Three components carry the correctness story:
    endpoints fall back to a capped in-process emergency limiter.
 3. **Hashed tenant identity** — buckets are keyed
    `sentinel:v1:{sha256(tenant)}:{endpoint_id}:{policy_version}`; raw tenant ids never reach
-   Redis keys, logs, or metrics.
+   Redis keys, logs, or metrics. v1.2.0 adds anonymous policies in the separate
+   `sentinel:v2:{sha256(identity)}:{endpoint_id}:{policy_version}` keyspace.
 
 See [Architecture](architecture.md) for the full walkthrough: module map, request journey,
 clock discipline, and the eight non-negotiable invariants.

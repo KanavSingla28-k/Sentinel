@@ -30,11 +30,18 @@ Every **denied** decision emits a WARNING log on the `sentinel` logger with thes
 
 | Field | Content |
 |---|---|
-| `tenant_hash` | SHA-256 hash of the tenant id — **never** the raw tenant |
+| `identity_mode` | `tenant_jwt` or `anonymous` |
+| `identity_hash` | SHA-256 hash of the rate-limit identity — tenant id for JWT requests; primary anonymous identity for anonymous requests |
 | `endpoint_id` | The explicit configured endpoint id |
 | `decision_reason` | One of the 8 `DecisionReason` values |
 | `latency_micro` | Evaluation latency in microseconds |
 | `breaker_state` | `CLOSED` / `OPEN` / `HALF_OPEN` at decision time |
+
+For `tenant_jwt`, `identity_hash` is the SHA-256 hash of the validated JWT `sub` claim. For
+`anonymous`, it is the hash of `anon:cookie:{client_id}` when a valid cookie was supplied, or
+`anon:ip:{ip}` when the request has no valid cookie. The cookie id and IP are never emitted raw.
+The same identity fields are used for tenant and anonymous denials; there is no `tenant_hash`
+field in the shipped log record.
 
 Allowed decisions are **not** logged (they still increment the metrics).
 
@@ -50,9 +57,8 @@ The 8 `DecisionReason` values: `ALLOWED`, `RATE_LIMITED`, `EMERGENCY_LOCAL_LIMIT
   infrastructure.
 - **No payload collection.** Sentinel never reads or records request bodies, URLs, or headers
   beyond the `Authorization` header it must verify.
-- **No raw tenant ids.** Tenant identity appears only as `tenant_hash` (SHA-256) in metrics,
-  logs, and Redis keys — a hash is not a secret, but raw ids never leak through Sentinel's
-  output surfaces.
+- **No raw identities.** Tenant, cookie, and IP identities appear only as SHA-256 hashes in
+  logs and Redis keys. Metrics contain neither raw identities nor identity hashes.
 - **No auth-event noise.** 401s (missing/invalid/expired token) happen before any Redis call
   and produce **no** decision, no metric increment, and no deny log.
 - **No dashboard.** Sentinel emits metrics; building a dashboard is up to you (explicitly

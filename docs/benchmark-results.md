@@ -1,9 +1,14 @@
-# Sentinel — Benchmark Results
+# Sentinel — Historical Benchmark Results (pre-v1.2.0)
 
-**Fresh benchmark run: 2026-08-18, three full harness runs on `main` @ `e8d8916`.** This
+**Historical benchmark run: 2026-08-18, three full harness runs on `main` @ `e8d8916`.** This
 document replaces the Phase 14 baseline entry (2026-08-15) as the current reference record.
 Numbers are median-of-runs across three full harness executions; the run-to-run spread is
 disclosed in §7 so the noise floor of this measurement environment is known.
+
+This data predates the v1.2.0 / Phase 19 anonymous identity implementation. It measures tenant
+JWT, token-bucket, sliding-window, and failure paths only; it does **not** benchmark the
+anonymous cookie/IP dual-bucket path. No anonymous performance numbers or v1.2.0 performance
+guarantees are inferred from these results.
 
 Reported as-is per vision §12: single-machine Docker-Compose loopback topology, disclosed, not
 implied scale. **No thresholds are asserted anywhere in this document** — these numbers exist to
@@ -44,7 +49,7 @@ Op counts per cell (×3 reps ×3 runs): HTTP cells 2,000, limiter cells 5,000, R
 
 | Key | Value |
 |---|---|
-| git commit | `e8d8916cbf77a69450b3f17ca83aa8be0101814d` (main, post-v1.0.1) |
+| git commit | `e8d8916cbf77a69450b3f17ca83aa8be0101814d` (main, post-v1.0.1; pre-v1.2.0) |
 | Platform | Windows-11-10.0.26200-SP0 |
 | Python | 3.13.7 |
 | CPU | Intel64 Family 6 Model 186 Stepping 2, GenuineIntel (16 logical cores) |
@@ -202,3 +207,18 @@ environment block, and writes per-run JSON to `benchmarks/results/<timestamp>-<s
 
 Raw data: `benchmarks/results/20260818-103146-*.json`, `20260818-103419-*.json`,
 `20260818-103610-*.json`.
+
+## 11 · v1.2.0 anonymous benchmark coverage
+
+The existing harness predates Phase 19 and has no anonymous-policy cells. The following cases
+remain unmeasured and are documented here without invented results:
+
+- A1: anonymous request without a cookie
+- A2: anonymous request with a valid cookie
+- A3: anonymous cookie/IP denial
+- A4: anonymous concurrent requests
+- A5: anonymous Redis failure path
+
+The v1.2.0 release does not claim performance characteristics for these cases. A future
+benchmark can add them using the existing harness methodology and must record its own commit,
+environment, and results separately.
