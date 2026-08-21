@@ -1,9 +1,13 @@
 # Sentinel
 
+**Current release: v1.2.0** — adds anonymous endpoint rate limiting with a signed client cookie
+and trusted-client IP dual buckets, while retaining the tenant/JWT behavior from earlier
+releases.
+
 **Application-aware, tenant-aware, distributed rate limiting for FastAPI** — backed by a single
 dedicated Redis instance and atomic Lua scripts.
 
-Sentinel sits one layer above edge/CDN limiters: it understands *tenants* and *endpoints*, not
+Sentinel sits one layer above edge/CDN limiters: it understands _tenants_ and _endpoints_, not
 just IPs. Every endpoint gets its own algorithm (token bucket or sliding window), its own
 capacity and rate, and — crucially — its own **failure semantics**: an endpoint that must never
 overrun (expensive OCR compute) fails closed; an endpoint that must never block paying users
@@ -42,15 +46,15 @@ fire from hundreds of IPs and bypass IP-based limits entirely.
 Sentinel rates per **tenant** (a validated JWT `sub` claim) and per **endpoint** (an explicit
 configured id). Each endpoint declares how it must behave:
 
-| Service | Endpoint | Algorithm | Fail mode | Why |
-|---|---|---|---|---|
-| PDFTalk | `pdftalk.ingest` | sliding window | fail closed | OCR compute is expensive; a Redis failure must stop traffic (503), not unmetered jobs |
-| Resumint | `resumint.tailor` | token bucket | fail open | UX-sensitive; a Redis failure must not block users, but the emergency limiter caps the overrun |
+| Service  | Endpoint          | Algorithm      | Fail mode   | Why                                                                                            |
+| -------- | ----------------- | -------------- | ----------- | ---------------------------------------------------------------------------------------------- |
+| PDFTalk  | `pdftalk.ingest`  | sliding window | fail closed | OCR compute is expensive; a Redis failure must stop traffic (503), not unmetered jobs          |
+| Resumint | `resumint.tailor` | token bucket   | fail open   | UX-sensitive; a Redis failure must not block users, but the emergency limiter caps the overrun |
 
-This is a *library, not a service*: it runs inside your FastAPI process. There is no sidecar, no
+This is a _library, not a service_: it runs inside your FastAPI process. There is no sidecar, no
 proxy, no deployment to manage — you install it, wire one dependency, and configure policies.
 
-**Anonymous endpoints too (Phase 19).** Unauthenticated routes (login, signup, password reset)
+**Anonymous endpoints too (v1.2.0, Phase 19).** Unauthenticated routes (login, signup, password reset)
 have no JWT `sub` to key on. Sentinel mints a server-issued, HMAC-signed device cookie and
 combines it with the trusted-client IP (from `request.client` — forwarding headers are never
 read) into a dual-bucket decision: allowed only if both buckets allow. Identity hashes live in
@@ -81,7 +85,7 @@ sentinel/                  the library (14 modules, ~500 lines total)
 ├── http.py                 SentinelGuard — the FastAPI integration
 └── observability.py        structured logs + Prometheus metrics
 
-tests/                     302 tests — see [Test results](#test-results)
+tests/                     375 tests — see [Test results](#test-results)
 benchmarks/                dependency-free benchmark harness
 docs/                      architecture, failure-handling, known-limitations,
                            benchmark results, project record
@@ -105,28 +109,28 @@ Three components carry the correctness story:
 
 2. **The resiliency triangle** (`sentinel/errors.py`, `sentinel/circuit_breaker.py`,
    `sentinel/emergency.py`) — when Redis fails:
-   - the failure is *classified* (`REDIS_TIMEOUT`, `REDIS_CONNECTION_ERROR`, …),
+   - the failure is _classified_ (`REDIS_TIMEOUT`, `REDIS_CONNECTION_ERROR`, …),
    - a per-process circuit breaker trips OPEN after 5 consecutive failures and short-circuits
      for 30 s (no request ever waits on a dead Redis),
    - fail-open endpoints fall back to an in-process emergency limiter capped at
      `fallback_rate_per_process_micro`; fail-closed endpoints deny with 503.
-   A Redis failure never makes a request wait beyond a 20 ms budget, and every failure resolves
-   to one of 8 bounded `DecisionReason` values.
+     A Redis failure never makes a request wait beyond a 20 ms budget, and every failure resolves
+     to one of 8 bounded `DecisionReason` values.
 
 3. **Hashed tenant identity** — buckets are keyed
    `sentinel:v1:{sha256(tenant)}:{endpoint_id}:{policy_version}`. Raw tenant ids never reach
    Redis keys, logs, or metrics. Tenant identity comes **only** from a validated JWT `sub`
    claim — the `X-Tenant-ID` header is ignored (spoofing is a locked regression test).
-   Anonymous policies (Phase 19) key the same way in a separate `sentinel:v2:` keyspace with
+   Anonymous policies (v1.2.0) key the same way in a separate `sentinel:v2:` keyspace with
    `anon:cookie:*` / `anon:ip:*` identity strings — the client IP comes only from
    `request.client`, never from `X-Forwarded-For` or any client-supplied header.
 
 State is a single Redis string per bucket, written with `SET` + `EXPIRE` only (no `DEL`, no
 `KEYS`/`SCAN`, no eviction):
 
-| Algorithm | State | Expiry |
-|---|---|---|
-| Token bucket | `tokens_micro:last_refill_micro` | until the bucket would be full again |
+| Algorithm      | State                                 | Expiry                                   |
+| -------------- | ------------------------------------- | ---------------------------------------- |
+| Token bucket   | `tokens_micro:last_refill_micro`      | until the bucket would be full again     |
 | Sliding window | `current:previous:window_start_micro` | two windows (rollover horizon, lossless) |
 
 **Denied requests never write** — a denied evaluation returns without touching the key, so
@@ -143,7 +147,7 @@ One request to a guarded endpoint, in eight steps (`docs/architecture.md` §2 fo
 
 1. **Bearer token extraction** — non-empty `Authorization: Bearer <token>`; anything else is a
    401 before any Redis call.
-2. **JWT verification** — PyJWT with an allowlisted HS* algorithm; requires `exp` + `sub`.
+2. **JWT verification** — PyJWT with an allowlisted HS\* algorithm; requires `exp` + `sub`.
    Auth failures are 401 and never count as rate-limit decisions.
 3. **Policy resolution** — `(tenant, endpoint_id) → Policy`; unknown endpoint → 404.
 4. **Script readiness** — Lua scripts loaded at startup (`await guard.load_scripts()`).
@@ -154,7 +158,7 @@ One request to a guarded endpoint, in eight steps (`docs/architecture.md` §2 fo
    where computable) or 503 (store failures).
 8. **Observability** — every decision increments metrics; every denial emits a WARNING log.
 
-For anonymous policies the journey is the same minus the bearer token: a signed device cookie
+For anonymous policies (introduced in v1.2.0) the journey is the same minus the bearer token: a signed device cookie
 (verified, else minted) plus the trusted-client IP are evaluated as dual buckets — allowed only
 if both allow — and the minted cookie is delivered only on allowed requests
 (`guard.anonymous_guard_for(endpoint_id)`).
@@ -173,30 +177,35 @@ These are non-negotiable design contracts (each is enforced by tests and documen
    `DecisionReason`.
 5. **No client-reachable numeric input** — no `cost` parameter; the only script arguments are
    server-side policy values.
-6. **Lua integer exactness** — configuration arithmetic is bounded so it stays exact below 2^53.
+6. **Lua integer exactness** — configuration arithmetic is bounded so validated products stay
+   exact below 2^52.
+7. **Anonymous identity hygiene** — cookie and IP identities are hashed in the separate
+   `sentinel:v2:` keyspace; forwarding headers are never read, and denied requests never receive
+   a newly minted cookie.
 
 ---
 
 ## Test results
 
-| | |
-|---|---|
-| **Total** | **302 tests** (all passing, 0 skipped against a real Redis) |
-| **Coverage** | **100%** on `sentinel/` (enforced: CI fails below it) |
-| **Type checking** | `mypy --strict` clean |
-| **Linting / formatting** | ruff check + format clean, pre-commit hooks clean |
+|                          |                                                                      |
+| ------------------------ | -------------------------------------------------------------------- |
+| **Total**                | **375 collected tests** (0 skipped when run against reachable Redis) |
+| **Coverage**             | **100%** on `sentinel/` (enforced: CI fails below it)                |
+| **Type checking**        | `mypy --strict` clean                                                |
+| **Linting / formatting** | ruff check + format clean, pre-commit hooks clean                    |
 
 The suite is organized into dedicated CI jobs so every category runs in isolation:
 
-| Suite | Size | What it proves |
-|---|---|---|
-| Default (`pytest`) | 302 tests | everything below, plus unit + HTTP integration |
-| `pytest -m security` | 23 tests | spoofing (SEC-03), URL/endpoint injection (SEC-08), Lua TTL-only expiry, noeviction checks, metrics cardinality bombs |
-| `pytest -m slow` | 17 tests | 50-coroutine races on shared buckets, 3-process shared-bucket atomicity, dead-port failure injection, packaging (wheel build + fresh-venv install smoke) |
+| Suite                   | Size               | What it proves                                                                                                                                   |
+| ----------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Default (`pytest`)      | 375 tests          | complete suite; Redis-dependent tests skip when Redis is unreachable                                                                             |
+| `pytest -m security`    | 36 collected tests | spoofing, anonymous identity/header controls, URL/endpoint injection, Lua TTL-only expiry, noeviction checks, and metrics cardinality safeguards |
+| `pytest -m slow`        | 19 collected tests | 50-coroutine races, 3-process shared-bucket atomicity, dead-port failure injection, and packaging                                                |
+| `pytest -m integration` | 70 collected tests | tests that exercise a reachable Redis instance, including anonymous flows and Lua parity                                                         |
 
 Headline correctness proofs, all green:
 
-- **Exact token-bucket capacity** under 50 racing coroutines *and* across 3 spawned processes —
+- **Exact token-bucket capacity** under 50 racing coroutines _and_ across 3 spawned processes —
   Redis never admits more than the configured capacity, with the strict equality branch in CI.
 - **Sliding window bounded by the reference** — real Redis output matches the pure-Python
   reference across 25 parity tests and property tests.
@@ -219,12 +228,12 @@ per-cell detail live in [`docs/benchmark-results.md`](docs/benchmark-results.md)
 
 Three numbers tell the story (`c=1` = one concurrent client, p50 = median latency):
 
-| What was measured | Result | Plain-English meaning |
-|---|---|---|
-| Unguarded endpoint (baseline) | ~5,700 req/s, 155 µs p50 | the HTTP stack alone |
-| **With Sentinel** (token bucket) | ~950 req/s, 1,036 µs p50 | one loopback Redis round trip + JWT + decision; ≈6× overhead vs unguarded |
-| Breaker OPEN short-circuit | ~41k req/s, 4–21 µs p50 | when the breaker has tripped, the cost is nearly free |
-| Dead-port fail-open / fail-closed | p99 ≈ 27–33 ms | dominated by the 20 ms socket timeout — the limiter is not the failure-path cost |
+| What was measured                 | Result                   | Plain-English meaning                                                            |
+| --------------------------------- | ------------------------ | -------------------------------------------------------------------------------- |
+| Unguarded endpoint (baseline)     | ~5,700 req/s, 155 µs p50 | the HTTP stack alone                                                             |
+| **With Sentinel** (token bucket)  | ~950 req/s, 1,036 µs p50 | one loopback Redis round trip + JWT + decision; ≈6× overhead vs unguarded        |
+| Breaker OPEN short-circuit        | ~41k req/s, 4–21 µs p50  | when the breaker has tripped, the cost is nearly free                            |
+| Dead-port fail-open / fail-closed | p99 ≈ 27–33 ms           | dominated by the 20 ms socket timeout — the limiter is not the failure-path cost |
 
 Key takeaways:
 
@@ -273,7 +282,7 @@ production:
 - **Breaker + emergency limiter are per-process** — N instances = N independent breakers, and
   fail-open allowance scales with instance count; choose `fallback_rate_per_process_micro` with
   your instance count in mind.
-- **HS* JWT only** — no JWKS/asymmetric keys yet (deferred to V2); key rotation is a redeploy.
+- **HS\* JWT only** — no JWKS/asymmetric keys yet (deferred to V2); key rotation is a redeploy.
 - **JWT replay detection lives upstream** (short-lived tokens, mTLS, single-use).
 - **Sliding window is an estimate** (`current + previous × remaining/window`) and its denials
   carry no `Retry-After`; token-bucket denials do.

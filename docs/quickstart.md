@@ -1,5 +1,8 @@
 # Quick Start
 
+This guide targets v1.2.0, which supports both tenant/JWT policies and anonymous cookie/IP
+policies.
+
 The smallest realistic path from zero to a rate-limited FastAPI endpoint:
 
 ```text
@@ -36,7 +39,9 @@ Create `sentinel.json` (copy the working example from
   "app": {
     "redis_url": "redis://localhost:6379/0",
     "jwt_secret": "dev-only-secret-change-me-0123456789abcdef",
-    "jwt_algorithm_allowlist": ["HS256"]
+    "jwt_algorithm_allowlist": ["HS256"],
+    "anonymous_cookie_secret": "anon-dev-only-secret-change-me-0123456789abcdef",
+    "anonymous_cookie_secure": false
   },
   "policies": {
     "resumint.tailor": {
@@ -87,7 +92,7 @@ app = FastAPI(lifespan=lifespan)
 
 ## 4 · Apply rate limiting
 
-Guard an endpoint by passing the configured `endpoint_id` to `guard_for(...)`:
+Guard a tenant endpoint by passing the configured `endpoint_id` to `guard_for(...)`:
 
 ```python
 @app.post("/tailor")
@@ -109,6 +114,20 @@ Clients must send `Authorization: Bearer <JWT>` with a validated `sub` claim (th
 identity). When a request exceeds the limit, Sentinel denies it with **429** (rate limit
 exceeded, `Retry-After` where computable) — or **503** for store failures on fail-closed
 endpoints. The handler runs only when `request.state.decision.allowed` is `True`.
+
+For an unauthenticated endpoint, use its anonymous policy with the matching dependency:
+
+```python
+@app.post("/login")
+async def login(
+  request: Request, _: None = Depends(guard.anonymous_guard_for("auth.login"))
+) -> dict[str, object]:
+  return {"allowed": request.state.decision.allowed}
+```
+
+The v1.2.0 anonymous guard evaluates the signed cookie and `request.client.host` IP buckets
+with AND semantics. Forwarding headers are ignored, and a newly minted cookie is sent only on an
+allowed response. `anonymous_cookie_secret` is required whenever an anonymous policy exists.
 
 ---
 

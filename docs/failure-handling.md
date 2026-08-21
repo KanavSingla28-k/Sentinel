@@ -1,8 +1,8 @@
 # Sentinel — Failure Handling
 
-*Phase 15 documentation deliverable. The frozen decision table lives in project record §06; this
+_Updated for v1.2.0. The frozen decision table lives in project record §06; this
 document walks the shipped machinery — classification, circuit breaker, emergency limiter, HTTP
-semantics, and the measured failure-path latency — with code references.*
+semantics, and the measured failure-path latency — with code references._
 
 Sentinel's failure philosophy, stated once: **a Redis failure never causes a request to wait
 beyond the configured timeout, and every failure resolves to a row in the decision table.** No
@@ -14,13 +14,13 @@ bare `except:`, no silent fallbacks, no unbounded fail-open.
 
 Every evaluation ends in exactly one `DecisionReason` (8 members, `sentinel/models.py:34`):
 
-| Redis outcome | Fail-open (Resumint) | Fail-closed (PDFTalk) |
-|---|---|---|
-| Success | Lua result (`ALLOWED` / `RATE_LIMITED`) | Lua result (`ALLOWED` / `RATE_LIMITED`) |
-| Timeout (20 ms) | Emergency local limiter | Deny → `FAIL_CLOSED` |
-| Connection error | Emergency local limiter | Deny → `FAIL_CLOSED` |
-| `NOSCRIPT` (re-load exhausted) | Emergency local limiter | Deny → `FAIL_CLOSED` |
-| Circuit breaker OPEN | Emergency local limiter | Deny → `CIRCUIT_OPEN` |
+| Redis outcome                  | Fail-open (Resumint)                    | Fail-closed (PDFTalk)                   |
+| ------------------------------ | --------------------------------------- | --------------------------------------- |
+| Success                        | Lua result (`ALLOWED` / `RATE_LIMITED`) | Lua result (`ALLOWED` / `RATE_LIMITED`) |
+| Timeout (20 ms)                | Emergency local limiter                 | Deny → `FAIL_CLOSED`                    |
+| Connection error               | Emergency local limiter                 | Deny → `FAIL_CLOSED`                    |
+| `NOSCRIPT` (re-load exhausted) | Emergency local limiter                 | Deny → `FAIL_CLOSED`                    |
+| Circuit breaker OPEN           | Emergency local limiter                 | Deny → `CIRCUIT_OPEN`                   |
 
 The `fail_mode` comes from the endpoint's `Policy` — it is a product decision per integration,
 not a global setting (ADR-006): PDFTalk's expensive OCR fails closed to protect compute;
@@ -33,12 +33,12 @@ Resumint's UX-sensitive tailoring fails open but never unlimited.
 `classify_redis_error(exc) -> DecisionReason` maps the failure to a bounded reason
 (`sentinel/errors.py:14`):
 
-| Exception | Reason |
-|---|---|
-| `redis.exceptions.TimeoutError` | `REDIS_TIMEOUT` |
-| `redis.exceptions.ConnectionError` | `REDIS_CONNECTION_ERROR` |
-| `ScriptMissingError` (NOSCRIPT re-load exhausted) | `REDIS_NOSCRIPT_RETRY` |
-| Any other `RedisError` | `REDIS_CONNECTION_ERROR` |
+| Exception                                         | Reason                   |
+| ------------------------------------------------- | ------------------------ |
+| `redis.exceptions.TimeoutError`                   | `REDIS_TIMEOUT`          |
+| `redis.exceptions.ConnectionError`                | `REDIS_CONNECTION_ERROR` |
+| `ScriptMissingError` (NOSCRIPT re-load exhausted) | `REDIS_NOSCRIPT_RETRY`   |
+| Any other `RedisError`                            | `REDIS_CONNECTION_ERROR` |
 
 `RateLimiter.evaluate` catches only `RedisError` (`sentinel/limiter.py:147`). Programming
 errors — `KeyError`, `RuntimeError`, the unloaded-scripts guard — are never caught and
@@ -58,7 +58,7 @@ A per-process CLOSED / OPEN / HALF_OPEN state machine guarding the Redis boundar
 - **CLOSED** — calls reach Redis; each failure counts; **5 consecutive failures** (default
   `FAILURE_THRESHOLD`, `sentinel/circuit_breaker.py:16`) trip OPEN. Any genuine Redis success
   resets the count.
-- **OPEN** — every evaluation short-circuits with `CIRCUIT_OPEN` *before* any Redis call
+- **OPEN** — every evaluation short-circuits with `CIRCUIT_OPEN` _before_ any Redis call
   (`sentinel/limiter.py:143`), for the quarantine window (30 s default, `OPEN_TIMEOUT_SECONDS`).
 - **HALF_OPEN** — entered lazily after the quarantine; each arriving call is a probe. Success →
   CLOSED (count reset); failure → OPEN with a fresh quarantine.
@@ -88,7 +88,7 @@ The fail-open cap: a per-process, in-memory token bucket keyed by `endpoint_id` 
 - Denied → `EMERGENCY_LOCAL_LIMIT` with `remaining_micro` and `retry_after_seconds`.
 - Local monotonic clock (`sentinel/emergency.py:42`) — same documented exception as the
   breaker.
-- Fail-open requests allowed by the emergency limiter carry the *cause* as the reason
+- Fail-open requests allowed by the emergency limiter carry the _cause_ as the reason
   (`CIRCUIT_OPEN`, `REDIS_TIMEOUT`, ...) with `allowed=True` (`sentinel/limiter.py:173`) — the
   decision table stays lossless: metrics count them, the deny log does not.
 
@@ -102,10 +102,10 @@ an outage.
 
 `_denied_status` (`sentinel/http.py:47`) maps denied reasons to status codes:
 
-| HTTP status | Reasons | Body / headers |
-|---|---|---|
-| 429 Too Many Requests | `RATE_LIMITED`, `EMERGENCY_LOCAL_LIMIT` | `detail="rate limit exceeded"`; `Retry-After` when the decision carries one |
-| 503 Service Unavailable | `FAIL_CLOSED`, `CIRCUIT_OPEN`, `REDIS_TIMEOUT`, `REDIS_CONNECTION_ERROR`, `REDIS_NOSCRIPT_RETRY` | `detail="rate limiter unavailable"` |
+| HTTP status             | Reasons                                                                                          | Body / headers                                                              |
+| ----------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
+| 429 Too Many Requests   | `RATE_LIMITED`, `EMERGENCY_LOCAL_LIMIT`                                                          | `detail="rate limit exceeded"`; `Retry-After` when the decision carries one |
+| 503 Service Unavailable | `FAIL_CLOSED`, `CIRCUIT_OPEN`, `REDIS_TIMEOUT`, `REDIS_CONNECTION_ERROR`, `REDIS_NOSCRIPT_RETRY` | `detail="rate limiter unavailable"`                                         |
 
 `Retry-After` is emitted only when the decision provides it: the token-bucket strategy computes
 `ceil((1_000_000 - tokens_after) / rate)` (min 1, `sentinel/limiter.py:74`); the sliding-window
@@ -113,7 +113,7 @@ strategy deliberately returns none — the Lua result does not expose enough tim
 for a precise value (`sentinel/limiter.py:106`).
 
 Auth failures (missing/invalid/expired token) return 401 with `WWW-Authenticate: Bearer`
-*before* the resolver or limiter run (`sentinel/http.py:110`) — they never produce a
+_before_ the resolver or limiter run (`sentinel/http.py:110`) — they never produce a
 `DecisionReason`, never touch Redis, and emit no log or metric.
 
 ---
@@ -122,10 +122,10 @@ Auth failures (missing/invalid/expired token) return 401 with `WWW-Authenticate:
 
 Phase 14 baseline, disclosed as-is (single-machine Docker-Compose loopback; [benchmark-results.md](benchmark-results.md)):
 
-| Cell | Journey | p50 | p99 |
-|---|---|---|---|
-| B7 | Breaker-OPEN short-circuit (pre-tripped) | ≈ 7 µs (~96k ops/s) | — |
-| B8/B9 | Real dead-port failure, fail-open / fail-closed (breaker starts CLOSED, trips mid-run) | ≈ 22–27 ms | ≈ 22–29 ms |
+| Cell  | Journey                                                                                | p50                 | p99        |
+| ----- | -------------------------------------------------------------------------------------- | ------------------- | ---------- |
+| B7    | Breaker-OPEN short-circuit (pre-tripped)                                               | ≈ 7 µs (~96k ops/s) | —          |
+| B8/B9 | Real dead-port failure, fail-open / fail-closed (breaker starts CLOSED, trips mid-run) | ≈ 22–27 ms          | ≈ 22–29 ms |
 
 The failure path is dominated by the **20 ms dead-port socket budget** (`sentinel/redis.py:10`)
 — the limiter itself is not the failure-path cost; the breaker short-circuit is essentially
