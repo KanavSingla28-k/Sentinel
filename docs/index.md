@@ -45,7 +45,7 @@ configured id). Each endpoint declares how it must behave:
   wait beyond a 20 ms budget.
 - **Observable out of the box** — two bounded Prometheus metrics and structured WARNING logs on
   every denial.
-- **Proven correctness** — 302 tests including 50-coroutine races, 3-process shared-bucket
+- **Proven correctness** — 374 tests including 50-coroutine races, 3-process shared-bucket
   atomicity, and real failure injection; 100% coverage on `sentinel/`.
 
 ---

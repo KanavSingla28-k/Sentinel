@@ -279,7 +279,7 @@ Feasible, and no longer theoretically feasible — every P0 issue found across t
 > `sentinel-0.1.0` wheel; no genuine Sentinel defects surfaced (two pre-existing PDFTalk-side
 > issues recorded there: 500 on non-UUID `sub`, structlog dropping `extra` fields).
 > Phase 18 (production readiness review & v1.0.0, PR #18) ran the full gate suite green on real
-> Redis (302 tests, 100% coverage, mypy/ruff/pre-commit, benchmark smoke), walked the
+> Redis (374 tests, 100% coverage, mypy/ruff/pre-commit, benchmark smoke), walked the
 > known-limitations list with no blocking findings, bumped the version to 1.0.0, and tagged
 > `v1.0.0`.
 > **Post-release (PRs #19–#20):** the `v1.0.0` PyPI publish never landed (tag-time run failed on
