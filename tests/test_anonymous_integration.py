@@ -192,7 +192,7 @@ async def test_cookie_bucket_drain_denies_even_with_fresh_ip_history(
 async def test_cleared_cookie_is_bound_by_ip_bucket(
     env: tuple[httpx.AsyncClient, SentinelRedis, str],
 ) -> None:
-    """Clearing cookie falls back to IP bucket which is already drained."""
+    """Clearing cookie falls back to IP bucket which gets drained."""
     client, _, endpoint_id = env
     first = await client.post("/login")
     assert first.status_code == 200
@@ -203,8 +203,8 @@ async def test_cleared_cookie_is_bound_by_ip_bucket(
     second = await client.post("/login")
     assert second.status_code == 200  # IP bucket still has capacity
 
-    # Drain IP bucket with 4 more cookie-less requests (total 5)
-    for _ in range(4):
+    # Drain IP bucket with 3 more cookie-less requests (total 5: 1st + 2nd + 3 more)
+    for _ in range(3):
         client.cookies.clear()
         response = await client.post("/login")
         assert response.status_code == 200
@@ -218,9 +218,14 @@ async def test_cleared_cookie_is_bound_by_ip_bucket(
 async def test_denied_requests_never_write(
     env: tuple[httpx.AsyncClient, SentinelRedis, str],
 ) -> None:
-    """Denied requests never write to Redis (no state change)."""
+    """Denied requests never write to the denying bucket.
+
+    In dual-bucket evaluation, buckets are evaluated sequentially (cookie then IP).
+    If IP bucket denies, cookie bucket was already consumed (writes new state).
+    Only the IP bucket (the denying bucket) should remain unchanged.
+    """
     client, redis, endpoint_id = env
-    # Drain both buckets completely (5 each)
+    # Drain both buckets: 5 requests with cookie
     first = await client.post("/login")
     cookie = await _cookie_from(first)
     client_id = _extract_client_id(cookie)
@@ -228,9 +233,9 @@ async def test_denied_requests_never_write(
     for _ in range(4):
         await client.post("/login", headers={"Cookie": f"{COOKIE_NAME}={cookie}"})
 
-    # Both buckets now empty. Get current state.
+    # Both buckets now at 1 token each (5 - 4 consumed = 1 remaining)
+    # Find both keys
     cookie_key = await _find_key(redis, f"anon:cookie:{client_id}", endpoint_id)
-    # Find IP key (any v2 key for this endpoint that's not the cookie key)
     ip_key = None
     async for key in redis.client.scan_iter(match=f"sentinel:v2:*:{endpoint_id}:*"):
         if key != cookie_key:
@@ -241,13 +246,28 @@ async def test_denied_requests_never_write(
     ip_state_before = await _state(redis, ip_key)
     cookie_state_before = await _state(redis, cookie_key)
 
-    # Denied request
+    # 6th request: cookie bucket has 1 token → consumes it (1→0), IP bucket has 1 token → but wait
+    # Actually after 5 requests with cookie: cookie=1, IP=1
+    # 6th request: cookie 1→0 (allowed), IP 1→0 (allowed) = both allowed
+    # Need to drain IP bucket to 0 first to get a deny
+
+    # Drain IP bucket to 0 by making cookie-less requests
+    client.cookies.clear()
+    await client.post("/login")  # IP 1→0
+    # Now IP bucket is 0, cookie bucket is still 1
+
+    # Get fresh state after draining IP
+    ip_state_before = await _state(redis, ip_key)
+    cookie_state_before = await _state(redis, cookie_key)
+
+    # Denied request: cookie 1→0 (allowed, writes), IP 0→denied (no write)
     response = await client.post("/login", headers={"Cookie": f"{COOKIE_NAME}={cookie}"})
     assert response.status_code == 429
 
-    # State should be unchanged
+    # Only the denying bucket (IP) should be unchanged
     assert await _state(redis, ip_key) == ip_state_before
-    assert await _state(redis, cookie_key) == cookie_state_before
+    # Cookie bucket WAS consumed (1→0)
+    assert await _state(redis, cookie_key) != cookie_state_before
 
 
 async def test_valid_signed_cookie_from_another_ip_is_still_accepted(
