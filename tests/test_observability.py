@@ -78,7 +78,8 @@ async def test_obs_02_denied_decision_logs_structured_deny(
     record = records[0]
     assert record.levelname == "WARNING"
     assert record.getMessage() == "rate limit decision denied"
-    assert record.tenant_hash == hash_tenant("tenant-a")
+    assert record.identity_mode == "tenant_jwt"
+    assert record.identity_hash == hash_tenant("tenant-a")
     assert record.endpoint_id == "resumint.tailor"
     assert record.decision_reason == "rate_limited"
     assert record.latency_micro >= 0
@@ -278,3 +279,76 @@ async def test_obs_13_live_metrics_cardinality_bomb() -> None:
     assert samples
     assert {s[1]["endpoint_id"] for s in samples} == {"resumint.tailor"}
     assert all(s[1]["decision_reason"] == "allowed" for s in samples)
+
+
+async def test_obs_14_anonymous_denied_logs_identity_mode_and_hash(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from sentinel.anonymous import anonymous_ip_identity
+    from sentinel.limiter import hash_identity as hash_identity_alias
+
+    registry = CollectorRegistry()
+    observability = SentinelObservability(registry=registry)
+    app, guard, loader = _make_anonymous_app(observability=observability)
+    await guard.load_scripts()
+    loader.set_result(TOKEN_BUCKET_SCRIPT, [0, 0, 0, 0])
+    response = TestClient(app).post("/login")
+    assert response.status_code == 429
+    records = [r for r in caplog.records if r.getMessage().startswith("rate limit decision")]
+    assert len(records) == 1
+    record = records[0]
+    assert record.identity_mode == "anonymous"
+    assert record.identity_hash == hash_identity_alias(anonymous_ip_identity("unknown"))
+    assert record.endpoint_id == "auth.login"
+    assert record.decision_reason == "rate_limited"
+    assert "unknown" not in record.getMessage()
+    samples = _decision_samples(registry)
+    assert samples
+    assert all(set(s[1]) - {"le"} == _LABEL_KEYS for s in samples)
+
+
+def _make_anonymous_app(
+    *,
+    observability: SentinelObservability | None = None,
+) -> tuple[FastAPI, SentinelGuard, FakeLoader]:
+    from pydantic import SecretStr
+    from sentinel.config import AppConfig, SentinelConfig
+    from sentinel.models import AlgorithmType, FailMode, IdentityMode, Policy
+
+    loader = FakeLoader()
+    config = SentinelConfig(
+        app=AppConfig(
+            redis_url="redis://localhost:6379/0",
+            jwt_secret=SecretStr("test-secret-0123456789abcdef0123456789abcdef"),
+            jwt_algorithm_allowlist=frozenset({"HS256"}),
+            anonymous_cookie_secret=SecretStr("anon-test-secret-0123456789abcdef0123456789abcdef"),
+            anonymous_cookie_secure=False,
+        ),
+        policies={
+            "auth.login": Policy(
+                endpoint_id="auth.login",
+                identity=IdentityMode.ANONYMOUS,
+                algorithm=AlgorithmType.TOKEN_BUCKET,
+                fail_mode=FailMode.FAIL_OPEN,
+                fallback_rate_per_process_micro=1_000_000,
+                policy_version=1,
+                capacity_micro=2_000_000,
+                refill_rate_micro_per_sec=500_000,
+            )
+        },
+    )
+    guard = SentinelGuard(
+        config,
+        SentinelRedis(config.app.redis_url),
+        cast(ScriptLoader, loader),
+        observability=observability,
+    )
+    app = FastAPI()
+
+    @app.post("/login")
+    async def route(
+        request: Request, _: None = Depends(guard.anonymous_guard_for("auth.login"))
+    ) -> dict[str, bool]:
+        return {"allowed": request.state.decision.allowed}
+
+    return app, guard, loader

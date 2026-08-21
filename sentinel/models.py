@@ -31,6 +31,19 @@ class FailMode(enum.StrEnum):
     FAIL_CLOSED = "fail_closed"
 
 
+class IdentityMode(enum.StrEnum):
+    """Who the rate-limit bucket is keyed by (Phase 19).
+
+    ``tenant_jwt`` is the V1 contract: identity comes only from a validated
+    JWT ``sub`` claim. ``anonymous`` keys buckets by a server-issued signed
+    client cookie and the trusted-client IP (no JWT required); see
+    docs/anonymous-rate-limiting-plan.md.
+    """
+
+    TENANT_JWT = "tenant_jwt"
+    ANONYMOUS = "anonymous"
+
+
 class DecisionReason(enum.StrEnum):
     ALLOWED = "allowed"
     RATE_LIMITED = "rate_limited"
@@ -46,6 +59,7 @@ class Policy(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     endpoint_id: str = Field(pattern=_ENDPOINT_ID_PATTERN)
+    identity: IdentityMode = IdentityMode.TENANT_JWT
     capacity_micro: int | None = Field(default=None, ge=TOKENS_PER_TOKEN_MICRO)
     refill_rate_micro_per_sec: int | None = Field(default=None, ge=0)
     algorithm: AlgorithmType

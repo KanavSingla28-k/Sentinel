@@ -2,7 +2,11 @@
   "app": {
     "redis_url": "redis://localhost:6379/0",
     "jwt_secret": "dev-only-secret-change-me-0123456789abcdef",
-    "jwt_algorithm_allowlist": ["HS256"]
+    "jwt_algorithm_allowlist": ["HS256"],
+    "anonymous_cookie_secret": "anon-dev-only-secret-change-me-0123456789abcdef",
+    "anonymous_cookie_name": "sentinel_anon_id",
+    "anonymous_cookie_ttl_seconds": 2592000,
+    "anonymous_cookie_secure": false
   },
   "policies": {
     "pdftalk.ingest": {
@@ -22,6 +26,16 @@
       "fail_mode": "fail_open",
       "fallback_rate_per_process_micro": 2000,
       "policy_version": 1
+    },
+    "auth.login": {
+      "endpoint_id": "auth.login",
+      "identity": "anonymous",
+      "algorithm": "token_bucket",
+      "fail_mode": "fail_open",
+      "fallback_rate_per_process_micro": 2000,
+      "policy_version": 1,
+      "capacity_micro": 1000000,
+      "refill_rate_micro_per_sec": 500000
     }
   }
 }

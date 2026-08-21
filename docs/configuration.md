@@ -30,6 +30,16 @@ and per-algorithm field mixing is rejected at load. A working example ships in t
       "policy_version": 1,
       "capacity_micro": 10000000,
       "refill_rate_micro_per_sec": 10000
+    },
+    "auth.login": {
+      "endpoint_id": "auth.login",
+      "identity": "anonymous",
+      "algorithm": "token_bucket",
+      "fail_mode": "fail_open",
+      "fallback_rate_per_process_micro": 2000,
+      "policy_version": 1,
+      "capacity_micro": 1000000,
+      "refill_rate_micro_per_sec": 500000
     }
   }
 }
@@ -46,9 +56,15 @@ Deployment-level settings, validated by `AppConfig`:
 | `redis_url` | URL of the dedicated Redis instance the guard connects to | — (required) | Must start with `redis://` |
 | `jwt_secret` | Shared HMAC secret used to verify incoming bearer tokens | — (required) | Minimum 32 characters |
 | `jwt_algorithm_allowlist` | JWT algorithms accepted for verification | — (required) | Non-empty subset of `HS256`, `HS384`, `HS512`. Asymmetric keys and JWKS are rejected at load (deferred to V2) |
+| `anonymous_cookie_secret` | HMAC secret that signs anonymous client cookies | — (required iff any policy has `identity: "anonymous"`) | Minimum 32 characters; rejected at load if an anonymous policy exists without it |
+| `anonymous_cookie_name` | Cookie name carrying the anonymous client id | `sentinel_anon_id` | Pattern `^[a-zA-Z0-9_.-]+$` |
+| `anonymous_cookie_ttl_seconds` | Cookie lifetime before re-issuance | `2592000` (30 days) | 3600 ≤ value ≤ 7776000 |
+| `anonymous_cookie_secure` | `Secure` flag on the anonymous cookie | `true` | Set `false` only for local HTTP development |
 
 `jwt_secret` is treated as a secret value throughout; the algorithm allowlist exists because
-the token's `alg` header alone is not trustworthy.
+the token's `alg` header alone is not trustworthy. `anonymous_cookie_secret` is a **separate,
+dedicated** secret for the anonymous device cookie — never reuse `jwt_secret` for both (OWASP
+device-cookie guidance: one key per token type).
 
 ## `policies` section
 
@@ -63,6 +79,25 @@ a new bucket). Common fields:
 | `fail_mode` | Behavior when the Redis store fails | — (required) | `fail_closed` (503 on store failure) or `fail_open` (capped in-process emergency limiter). See [Failure Semantics](failure-semantics.md) |
 | `fallback_rate_per_process_micro` | Fail-open allowance per process, in µtokens/s | — (required) | ≥ 1. The emergency limiter's capacity and refill rate are both this value: a burst of one second's worth, then sustained. N instances can admit up to N × this rate |
 | `policy_version` | Version stamp that is part of the Redis key | — (required) | ≥ 1. Bump deliberately when a policy changes — it names a new bucket |
+| `identity` | Identity source for this endpoint's buckets | `tenant_jwt` | `tenant_jwt` (default; bearer-token `sub`) or `anonymous` (signed client cookie + trusted-client IP; requires `app.anonymous_cookie_secret`) |
+
+An `identity: "anonymous"` policy is wired with `guard.anonymous_guard_for(endpoint_id)`
+instead of `guard_for(...)`; using the wrong factory raises at route registration. Identity is
+per-endpoint: tenant and anonymous policies can coexist in one config.
+
+### Anonymous identity (Phase 19)
+
+Unauthenticated endpoints key on two buckets, AND-combined (allowed only if both allow):
+
+- **Cookie bucket** — a server-issued device id delivered as an `HttpOnly; SameSite=lax`
+  cookie, HMAC-signed with `anonymous_cookie_secret`. Tampered/expired cookies are treated as
+  missing and re-minted on the next allowed request. A denied request never receives a cookie.
+- **IP bucket** — `request.client.host` as resolved by the ASGI server's trusted-proxy layer.
+  Forwarding headers are never read. Missing/non-IP peers collapse to one shared bucket
+  (over-blocking, never quota bypass).
+
+Bucket keys live in the separate `sentinel:v2:{sha256(identity)}:{endpoint_id}:{policy_version}`
+keyspace; raw client ids and IPs never reach Redis keys, logs, or metrics.
 
 ### Token-bucket fields (`algorithm: "token_bucket"`)
 
